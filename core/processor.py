@@ -36,6 +36,11 @@ COLMAP = {
     "tipo_frete":    ["Tipo Frete", "Frete", "Modalidade Frete", "Tipo de Frete"],
     "filial":        ["Filial", "Empresa", "Estabelecimento", "Unidade",
                       "Razao Social", "Origem"],  # ex.: "MATRIZ - ACUCAR NUMERO UM"
+    "financeiro":    ["Financeiro", "Status Financeiro", "Situacao Financeira",
+                      "Bloqueio", "Liberacao"],
+    "previsao":      ["Previsão Entrega", "Previsao Entrega", "Prev Entrega",
+                      "Previsão de Embarque", "Previsao Embarque", "Data Embarque",
+                      "Previsão Embarque"],
 }
 
 # ---- TIPOS DE MP CANONICOS (coluna MP da aba Produtos) ----
@@ -369,6 +374,10 @@ def process(orders_path, config_path, priority_path, custos_saca, cif_path=None)
         "Margem de Contribuição Nominal (MC$)",
         "Margem de Contribuição Percentual (MC%)",
     ]
+    # 'Tipo Frete' do pedido (Emitente/Destinatario) colide com a coluna de
+    # enriquecimento homonima; capturar ANTES de criar as colunas novas.
+    tf_orig = orders[tf_col].copy() if tf_col else None
+
     for c in enr_cols + calc_cols:
         orders[c] = None
 
@@ -398,7 +407,7 @@ def process(orders_path, config_path, priority_path, custos_saca, cif_path=None)
         linha_txt = " / ".join(linhas)
 
         # frete: CIF (Emitente) usa tabela; FOB (Destinatario) = 0 (cliente paga)
-        tf_raw = str(row.get(tf_col, "")).strip() if tf_col else ""
+        tf_raw = str(tf_orig.loc[i]) if tf_orig is not None else ""
         is_fob = norm(tf_raw).startswith("destinat")
         if is_fob:
             tipo_frete, destino_rota, tarifa_t, frete = "FOB", "(cliente paga)", 0.0, 0.0
@@ -466,3 +475,101 @@ def summarize(df):
         "negativos": negativos,
         "priorizados": int((df["Pedido Priorizado"] == "SIM").sum()),
     }
+
+
+def carteira_resumo(orders_path, config_path, priority_path, cif_path=None):
+    """
+    Agrega a carteira para o painel ao vivo (MC inicial com Custo MP = 0).
+    Devolve, por MP e no total: Valor, Peso e 'outras deducoes' (ICMS+Frete+
+    Comissao+Embalagem+Bonificacao+Desc.Fin, independentes do custo de MP),
+    alem de %CIF/FOB e %Bloqueado/Liberado por faturamento.
+    O front calcula a MC ao vivo:  MC = Valor - outras - (custo_kg * Peso).
+    """
+    df, _ = process(orders_path, config_path, priority_path, {}, cif_path)
+    valor = pd.to_numeric(df["Valor Venda c/ Imposto"], errors="coerce").fillna(0)
+    mc0 = pd.to_numeric(df["Margem de Contribuição Nominal (MC$)"], errors="coerce").fillna(0)
+    outras = valor - mc0  # custo MP = 0 aqui, logo isto e a soma das demais deducoes
+
+    peso_col = resolve(df, COLMAP["peso_total"], required=False)
+    peso = df[peso_col].map(to_number) if peso_col else pd.Series([0.0] * len(df))
+    mp = df["Tipo de Matéria Prima"].fillna("").astype(str).str.strip()
+    tf = df["Tipo Frete"].fillna("").astype(str).str.upper()
+    fin_col = resolve(df, COLMAP["financeiro"], required=False)
+    fin = df[fin_col].fillna("").astype(str) if fin_col else pd.Series([""] * len(df))
+    fin_n = fin.map(norm)
+    ped_col = resolve(df, COLMAP["pedido"], required=False)
+
+    total_valor = float(valor.sum())
+
+    por_mp = {}
+    for m in sorted(set(mp), key=lambda x: _mp_sort_key(x) if x else (998, "")):
+        sel = mp == m
+        key = m if m else "(sem cadastro)"
+        por_mp[key] = {
+            "valor": round(float(valor[sel].sum()), 2),
+            "peso": round(float(peso[sel].sum()), 2),
+            "outras": round(float(outras[sel].sum()), 2),
+            "n_linhas": int(sel.sum()),
+            "tem_mp": bool(m),
+        }
+
+    cif_val = float(valor[tf == "CIF"].sum())
+    fob_val = float(valor[tf == "FOB"].sum())
+    bloq_val = float(valor[fin_n.str.contains("bloq")].sum())
+    lib_val = float(valor[fin_n.str.contains("liber")].sum())
+    pct = lambda x: round(x / total_valor * 100, 1) if total_valor else 0.0
+
+    return {
+        "ok": True,
+        "total_valor": round(total_valor, 2),
+        "total_peso": round(float(peso.sum()), 2),
+        "total_outras": round(float(outras.sum()), 2),
+        "n_linhas": int(len(df)),
+        "n_pedidos": int(df[ped_col].nunique()) if ped_col else int(len(df)),
+        "pct_cif": pct(cif_val), "pct_fob": pct(fob_val),
+        "pct_bloqueado": pct(bloq_val), "pct_liberado": pct(lib_val),
+        "por_mp": por_mp,
+    }
+
+
+def _sort_carteira(d, mc_asc=False):
+    """Ordena: Filial -> Priorizados primeiro -> MC R$ -> Previsao de embarque.
+    mc_asc=False: maior MC primeiro (principal). mc_asc=True: pior MC primeiro (atencao)."""
+    if d.empty:
+        return d
+    d = d.copy()
+    fil_col = resolve(d, COLMAP["filial"], required=False)
+    prev_col = resolve(d, COLMAP["previsao"], required=False)
+    d["__fil"] = d[fil_col].astype(str) if fil_col else ""
+    d["__prio"] = (d["Pedido Priorizado"].astype(str).str.upper() == "SIM").map({True: 0, False: 1})
+    d["__mc"] = pd.to_numeric(d["Margem de Contribuição Nominal (MC$)"], errors="coerce").fillna(0)
+    d["__prev"] = pd.to_datetime(d[prev_col], errors="coerce", dayfirst=True,
+                                 format="mixed") if prev_col else pd.NaT
+    d = d.sort_values(by=["__fil", "__prio", "__mc", "__prev"],
+                      ascending=[True, True, mc_asc, True], na_position="last")
+    return d.drop(columns=["__fil", "__prio", "__mc", "__prev"])
+
+
+def partition_and_sort(df):
+    """
+    Separa a carteira em:
+      - principal: priorizados (sempre) + demais pedidos limpos
+      - excecoes : NAO priorizados que sejam sem rota CIF, MC negativa ou bloqueados
+    Ambas ordenadas por Filial -> Priorizados -> maior MC R$ -> Previsao de embarque.
+    """
+    prio = df["Pedido Priorizado"].astype(str).str.upper() == "SIM"
+    mc = pd.to_numeric(df["Margem de Contribuição Nominal (MC$)"], errors="coerce").fillna(0)
+    tf = df["Tipo Frete"].astype(str).str.upper()
+    destino = df["Destino da Rota"].fillna("").astype(str).str.strip()
+    sem_rota = (tf == "CIF") & (destino == "")
+    neg = mc < 0
+    fin_col = resolve(df, COLMAP["financeiro"], required=False)
+    if fin_col:
+        bloq = df[fin_col].map(norm).str.contains("bloq", na=False)
+    else:
+        bloq = pd.Series(False, index=df.index)
+
+    excecao = (~prio) & (sem_rota | neg | bloq)
+    df_main = _sort_carteira(df[~excecao], mc_asc=False)   # maior MC primeiro
+    df_exc = _sort_carteira(df[excecao], mc_asc=True)       # pior MC primeiro
+    return df_main, df_exc

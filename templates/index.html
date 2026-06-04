@@ -11,39 +11,30 @@
   <div class="logo">N1</div>
   <div>
     <h1>Eixo N1 — Simulador de Margem de Contribuição</h1>
-    <div class="sub">Cruzamento de pedidos × custos de MP × frete · apoio à priorização de faturamento</div>
+    <div class="sub">Fontes fixas · custos de MP salvos · MC da carteira ao vivo</div>
   </div>
 </div>
 
 <div class="wrap">
 
-  <!-- ETAPA 1 -->
-  <div class="card" id="card-upload">
+  <!-- ETAPA 1 — FONTES -->
+  <div class="card" id="card-fontes">
     <div class="step-head">
       <div class="step-num">1</div>
       <div>
-        <h2>Importação de Arquivos</h2>
-        <p>Envie os três arquivos padrão para gerar a base de pedidos completa.</p>
+        <h2>Fontes de Dados</h2>
+        <p>Arquivos de referência — recebidos, salvos e fixados. Persistem entre sessões; só reenvie ao atualizar.</p>
       </div>
     </div>
-
-    <div class="uploads">
-      <label class="drop" id="drop-pedidos">
-        <div class="ic">📄</div>
-        <div class="nm">Pedidos a Faturar <span class="req">*</span></div>
-        <div class="hint">Excel com os pedidos a faturar</div>
-        <div class="fname"></div>
-        <input type="file" class="hidden" data-key="pedidos" accept=".xlsx,.xls,.csv">
-      </label>
-
+    <div class="msg info" id="banner-fontes" style="display:none"></div>
+    <div class="uploads u3">
       <label class="drop" id="drop-config">
         <div class="ic">⚙️</div>
         <div class="nm">N1_Config_Producao_Compilado <span class="req">*</span></div>
-        <div class="hint">Abas "Produtos" (MP) e "Índice Linha × Produto" (Nome Curto/linha)</div>
+        <div class="hint">Abas "Produtos" (MP) e "Índice Linha × Produto"</div>
         <div class="fname"></div>
         <input type="file" class="hidden" data-key="config" accept=".xlsx,.xls,.csv">
       </label>
-
       <label class="drop" id="drop-cif">
         <div class="ic">🚚</div>
         <div class="nm">Tabela de Rotas CIF <span class="req">*</span></div>
@@ -51,57 +42,74 @@
         <div class="fname"></div>
         <input type="file" class="hidden" data-key="cif" accept=".xlsx,.xls,.csv">
       </label>
-
       <label class="drop" id="drop-prioridade">
         <div class="ic">⭐</div>
         <div class="nm">Pedidos Priorizados <span class="req">*</span></div>
-        <div class="hint">Excel de coluna única com os pedidos prioritários</div>
+        <div class="hint">Coluna única com os pedidos prioritários</div>
         <div class="fname"></div>
         <input type="file" class="hidden" data-key="prioridade" accept=".xlsx,.xls,.csv">
       </label>
     </div>
-
     <div class="actions">
-      <button class="btn btn-azul" id="btn-analisar" disabled>Analisar Arquivos</button>
-      <span style="font-size:12px;color:var(--texto-suave)">Identifica os tipos de MP e os pedidos priorizados.</span>
+      <button class="btn btn-azul" id="btn-fontes">Salvar Fontes</button>
+      <span class="hint-inline">Salva e fixa os arquivos de referência.</span>
     </div>
-    <div id="msg-upload"></div>
+    <div id="msg-fontes"></div>
   </div>
 
-  <!-- ETAPA 2 -->
-  <div class="card hidden" id="card-custos">
+  <!-- ETAPA 2 — CARTEIRA & MARGEM -->
+  <div class="card" id="card-carteira">
     <div class="step-head">
       <div class="step-num">2</div>
       <div>
-        <h2>Custos de Matéria-Prima (NET, sem imposto)</h2>
-        <p>Informe o custo por <strong>saca de 50 kg</strong>. O sistema converte automaticamente para R$/kg.</p>
+        <h2>Carteira a Faturar &amp; Margem</h2>
+        <p>Carregue a carteira para ver os indicadores e o volume por MP. Informe o custo NET por <strong>saca de 50 kg</strong> e a MC é recalculada na hora (parte de margem 0,00).</p>
       </div>
     </div>
 
-    <div id="resumo-pre" class="msg info"></div>
-    <div class="mp-grid" id="mp-grid"></div>
-    <div class="warn-box hidden" id="sem-config"></div>
-
-    <div class="actions">
-      <button class="btn btn-primary" id="btn-gerar">Gerar Planilha de Pedido Completo</button>
-      <button class="btn btn-ghost" id="btn-voltar">Voltar</button>
+    <div class="uploads u1">
+      <label class="drop" id="drop-pedidos">
+        <div class="ic">📄</div>
+        <div class="nm">Carteira "A Faturar" <span class="req">*</span></div>
+        <div class="hint">Arquivo de pedidos do período</div>
+        <div class="fname"></div>
+        <input type="file" class="hidden" data-key="pedidos" accept=".xlsx,.xls,.csv">
+      </label>
     </div>
-    <div id="msg-custos"></div>
+    <div class="actions">
+      <button class="btn btn-azul" id="btn-carteira" disabled>Carregar Carteira</button>
+      <span class="hint-inline" id="carteira-status"></span>
+    </div>
+    <div id="msg-carteira"></div>
+
+    <!-- painel (revelado após carregar a carteira) -->
+    <div id="painel" class="hidden">
+      <div class="band-title">Indicadores da Carteira</div>
+      <div class="cards" id="kpis-topo"></div>
+
+      <div class="band-title">Custo de MP &amp; Margem por Matéria-Prima</div>
+      <div class="mp-grid" id="mp-grid"></div>
+
+      <div class="warn-box hidden" id="diag-box"></div>
+      <div class="actions">
+        <button class="btn btn-primary" id="btn-gerar">Gerar Planilha de Pedido Completo</button>
+      </div>
+      <div id="msg-pedido"></div>
+    </div>
   </div>
 
-  <!-- RESULTADO -->
+  <!-- RESULTADO (mesma página) -->
   <div class="card hidden" id="card-result">
     <div class="step-head">
-      <div class="step-num">3</div>
+      <div class="step-num">✓</div>
       <div>
         <h2>Análise de Margem Gerada</h2>
-        <p>Resumo gerencial e download da planilha formatada.</p>
+        <p>Resumo gerencial e download da planilha formatada (duas abas).</p>
       </div>
     </div>
-    <div class="cards" id="kpis"></div>
+    <div class="cards" id="kpis-result"></div>
     <div class="actions">
       <a id="link-download" class="btn btn-primary" href="#">⬇ Baixar Análise de Margem (.xlsx)</a>
-      <button class="btn btn-ghost" id="btn-novo">Nova Análise</button>
     </div>
   </div>
 

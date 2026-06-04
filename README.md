@@ -8,28 +8,35 @@ apoiar a priorização de produção/embarque.
 
 ## Fluxo
 
-1. **Importação** — upload de 4 arquivos: Pedidos a Faturar, `N1_Config_Producao_Compilado`
-   (linha/MP/nome curto por produto), `N1_Tabela_Rotas_CIF_Padrao` (frete CIF), e a lista
-   (coluna única) de pedidos priorizados.
-2. **Custos de MP** — o sistema lista os Tipos de MP presentes nos pedidos; você informa o
-   custo por **saca de 50 kg** (NET, sem imposto). O sistema converte para R$/kg dividindo por 50.
-3. **Geração** — calcula ICMS, frete, comissão, custo MP, MC$ e MC%, e baixa o Excel formatado
-   (cabeçalho `#203764`, moeda `R$ #.##0,00`, percentual `0,00%`, linhas com MC negativa em vermelho).
+1. **Etapa 1 — Fontes de Dados:** envia, **salva e fixa** os arquivos de referência —
+   `N1_Config_Producao_Compilado`, `N1_Tabela_Rotas_CIF_Padrao` e a lista de pedidos
+   priorizados. Persistem entre sessões (banner mostra os últimos salvos); só reenvie ao atualizar.
+2. **Etapa 2 — Custos de MP:** os tipos de MP vêm do **Config** (aba Produtos). Informe o custo
+   NET por **saca de 50 kg**; o sistema faz ÷50 → R$/kg. Os valores ficam **salvos**.
+3. **Etapa 3 — Pedido a Faturar:** liberada só **após** salvar os custos. Envie o arquivo
+   "A faturar" → gera e baixa a planilha **"Análise de Margem"** formatada.
+
+O sistema sempre guarda os **últimos arquivos importados** e os **últimos custos de MP** em
+`data/state/` (sources + `custos.json`).
 
 ## Regras de cálculo
 
 | Coluna | Regra |
 |---|---|
 | Valor Venda c/ Imposto | coluna `Valor` do pedido |
-| (-) ICMS | 7% se UF Cliente = UF de origem; senão 12% |
-| (-) Custo Frete R$ | `(preço/tonelada da rota CIF / 1000) × Peso Total` |
+| (-) ICMS | valor real da coluna `ICMS` do arquivo |
+| (-) Custo Frete R$ | `(preço/tonelada da rota CIF / 1000) × Peso Total` (FOB = 0) |
 | (-) Comissão | `(Valor − Frete) × % Comissão` |
-| (-) Embalagem | 0,00 (reservado) |
+| (-) Embalagem | valor real da coluna `Embalagem` do arquivo |
 | (-) Bonificação | coluna `Bonificação R$` |
-| (-) Desc. Financeiro | 0,00 (reservado) |
+| (-) Desc. Financeiro | valor real da coluna `Desc Financ` do arquivo |
 | (-) Custo MP R$ | `(custo_saca / 50) × Peso Total` |
 | MC$ | Valor − soma das deduções |
 | MC% | MC$ / Valor |
+
+ICMS, Embalagem e Desc. Financeiro usam os valores já calculados pelo ERP no arquivo "A faturar"
+(mais fiéis que a regra 7/12, que erra em exportação/ST). Caso a coluna não exista em outro
+arquivo, há fallback: ICMS pela regra 7%/12% e Embalagem/Desc. Financeiro = 0.
 
 ### Origem e ICMS (duas plantas)
 
