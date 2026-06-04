@@ -35,7 +35,7 @@ _wthin = Side(style="thin", color=BRANCO)
 _HBORDER = Border(left=_wthin, right=_wthin, top=_wthin, bottom=_wthin)
 
 
-def _write_sheet(ws, df, meta):
+def _write_sheet(ws, df, meta, fob_highlight=True):
     cols = list(df.columns)
     money = set(meta.get("money_cols", []))
     pct = set(meta.get("pct_cols", []))
@@ -76,7 +76,7 @@ def _write_sheet(ws, df, meta):
             color, bold = INK, False
             if negativo and col in (mc_nom, mc_pct):
                 color, bold = RISCO, True
-            if is_fob and col == tf_col:
+            if fob_highlight and is_fob and col == tf_col:
                 color, bold = FOB_TXT, True
             c.font = Font(name=FONTE, size=9, color=color, bold=bold)
             if col in money:
@@ -85,7 +85,7 @@ def _write_sheet(ws, df, meta):
                 c.number_format = FMT_PCT
             if negativo:
                 c.fill = neg_fill
-            elif is_fob:
+            elif fob_highlight and is_fob:
                 c.fill = fob_fill
             elif i % 2 == 1:
                 c.fill = zebra_fill
@@ -103,20 +103,69 @@ def _write_sheet(ws, df, meta):
     ws.row_dimensions[1].height = 30
 
 
-def export_excel(df_main, df_exc, meta, out_path):
+def _write_consolidado(ws, df):
+    ws.sheet_view.showGridLines = False
+    cols = list(df.columns)
+    money = {"Faturamento (R$)", "MC (R$)"}
+    pctc = {"MC (%)"}
+    numc = {"Volume (t)"}
+    header_fill = PatternFill("solid", fgColor=VERDE_PRIMARIO)
+    for j, col in enumerate(cols, start=1):
+        c = ws.cell(row=1, column=j, value=str(col))
+        c.fill = header_fill; c.font = Font(color=BRANCO, bold=True, size=10, name=FONTE)
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        c.border = _HBORDER
+    for i, (_, row) in enumerate(df.iterrows(), start=2):
+        total = str(row[cols[0]]).startswith("TOTAL")
+        mcv = float(row["MC (R$)"]) if "MC (R$)" in df.columns else 0.0
+        for j, col in enumerate(cols, start=1):
+            val = row[col]
+            if col in money or col in pctc or col in numc:
+                try: val = float(val)
+                except Exception: val = 0.0
+            c = ws.cell(row=i, column=j, value=val)
+            c.border = _BORDER
+            color = RISCO if (mcv < 0 and col in ("MC (R$)", "MC (%)")) else INK
+            c.font = Font(name=FONTE, size=10, color=color, bold=total)
+            if col in money: c.number_format = FMT_MOEDA
+            elif col in pctc: c.number_format = FMT_PCT
+            elif col in numc: c.number_format = '#,##0.00'
+            if total: c.fill = PatternFill("solid", fgColor=ZEBRA)
+    widths = [30, 14, 20, 20, 12]
+    for j, w in enumerate(widths[:len(cols)], start=1):
+        ws.column_dimensions[get_column_letter(j)].width = w
+    ws.row_dimensions[1].height = 26
+    ws.freeze_panes = "A2"
+
+
+def _empty_sheet(ws, msg, width=70):
+    ws.sheet_view.showGridLines = False
+    c = ws.cell(row=1, column=1, value=msg)
+    c.font = Font(name=FONTE, size=10, color=INK, italic=True)
+    ws.column_dimensions["A"].width = width
+
+
+def export_excel(df_main, df_exc, df_fob, meta, out_path):
     wb = Workbook()
     ws1 = wb.active
-    ws1.title = "Análise de Margem"
-    _write_sheet(ws1, df_main, meta)
+    ws1.title = "Análise de Margem"      # todos os pedidos (revenda com custo exato)
+    if df_main is not None and not df_main.empty:
+        _write_sheet(ws1, df_main, meta)
+    else:
+        _empty_sheet(ws1, "Nenhum pedido nesta carteira.")
 
     ws2 = wb.create_sheet("Pedidos em Atenção")
     if df_exc is not None and not df_exc.empty:
         _write_sheet(ws2, df_exc, meta)
     else:
-        ws2.sheet_view.showGridLines = False
-        c = ws2.cell(row=1, column=1, value="Nenhum pedido em atenção "
-                     "(sem rota / MC negativa / bloqueado não priorizado).")
-        c.font = Font(name=FONTE, size=10, color=INK, italic=True)
-        ws2.column_dimensions["A"].width = 80
+        _empty_sheet(ws2, "Nenhum pedido em atenção (sem rota / MC negativa / bloqueado não priorizado).", 80)
+
+    ws3 = wb.create_sheet("Pedidos FOB - Retirada")
+    if df_fob is not None and not df_fob.empty:
+        _write_sheet(ws3, df_fob, meta, fob_highlight=False)
+        ws3.column_dimensions["A"].width = 24  # coluna manual de data
+    else:
+        _empty_sheet(ws3, "Nenhum pedido FOB nesta carteira.", 60)
+
     wb.save(out_path)
     return out_path

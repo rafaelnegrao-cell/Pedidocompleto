@@ -94,12 +94,31 @@
         <span class="hint-inline" id="painel-carteira"></span>
       </div>
 
-      <div class="band-title">Indicadores da Carteira</div>
-      <div class="cards" id="kpis-topo"></div>
+      <div class="tabbar">
+        <button class="tab active" data-tab="envasado">Envasado</button>
+        <button class="tab" data-tab="revenda">Revenda</button>
+        <button class="tab" data-tab="consolidado">Consolidado</button>
+      </div>
 
-      <div class="band-title">Custo de MP &amp; Margem por Matéria-Prima</div>
-      <p class="hint-inline" style="margin-bottom:10px">Informe o custo NET por <strong>saca de 50 kg</strong> (÷50 → R$/kg). A MC recalcula na hora (parte de margem 0,00).</p>
-      <div class="mp-grid" id="mp-grid"></div>
+      <div class="tabpane" id="pane-envasado">
+        <div class="seg-head" id="env-head"></div>
+        <p class="hint-inline" style="margin:4px 0 12px">Empacotado + Especial. Custo NET por <strong>saca de 50 kg</strong> (÷50 → R$/kg); a MC recalcula na hora.</p>
+        <div class="mp-grid" id="mp-grid"></div>
+      </div>
+
+      <div class="tabpane hidden" id="pane-revenda">
+        <div class="seg-head" id="rev-head"></div>
+        <p class="hint-inline" style="margin:4px 0 12px">Revenda <strong>não usa custo médio</strong>: informe o custo exato de compra (R$/saca 50kg) e a usina negociada de cada produto.</p>
+        <div class="mp-grid" id="rev-grid"></div>
+        <div id="rev-empty" class="hint-inline hidden">Nenhum pedido de revenda nesta carteira.</div>
+      </div>
+
+      <div class="tabpane hidden" id="pane-consolidado">
+        <div class="band-title">Indicadores da Carteira</div>
+        <div class="cards" id="kpis-topo"></div>
+        <div class="band-title">Volume e Margem por Mix de Produto</div>
+        <div id="consol-table"></div>
+      </div>
 
       <div class="warn-box hidden" id="diag-box"></div>
       <div class="actions">

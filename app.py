@@ -28,6 +28,8 @@ os.makedirs(OUT_DIR, exist_ok=True)
 
 META_PATH = os.path.join(STATE_DIR, "meta.json")
 CUSTOS_PATH = os.path.join(STATE_DIR, "custos.json")
+CUSTOS_REV_PATH = os.path.join(STATE_DIR, "custos_revenda.json")
+USINAS_REV_PATH = os.path.join(STATE_DIR, "usinas_revenda.json")
 SRC_KEYS = ("config", "cif", "prioridade")
 
 ALLOWED = {".xlsx", ".xls", ".csv", ".txt"}
@@ -186,6 +188,8 @@ def carteira():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     resumo["custos"] = _load_json(CUSTOS_PATH, {})
+    resumo["custos_revenda"] = _load_json(CUSTOS_REV_PATH, {})
+    resumo["usinas_revenda"] = _load_json(USINAS_REV_PATH, {})
     return jsonify(resumo)
 
 
@@ -194,6 +198,8 @@ def generate():
     """Gera a Planilha de Pedido Completo a partir da carteira salva + custos."""
     data = request.get_json(force=True, silent=True) or {}
     custos_in = data.get("custos", {})
+    custos_rev_in = data.get("custos_revenda", {})
+    usinas_rev_in = data.get("usinas_revenda", {})
 
     cfg_path = _saved_path("config")
     cif_path = _saved_path("cif")
@@ -205,18 +211,27 @@ def generate():
         return jsonify({"ok": False, "error": "Carregue a carteira na Etapa 2."}), 400
     if not custos_in:
         custos_in = _load_json(CUSTOS_PATH, {})
-    if not custos_in:
-        return jsonify({"ok": False, "error": "Informe os custos de MP."}), 400
+    if not custos_rev_in:
+        custos_rev_in = _load_json(CUSTOS_REV_PATH, {})
+    if not usinas_rev_in:
+        usinas_rev_in = _load_json(USINAS_REV_PATH, {})
+    if not custos_in and not custos_rev_in:
+        return jsonify({"ok": False, "error": "Informe os custos de MP e/ou de revenda."}), 400
 
-    _save_json(CUSTOS_PATH, custos_in)  # persiste os ultimos custos
+    _save_json(CUSTOS_PATH, custos_in)            # persiste custos de MP
+    _save_json(CUSTOS_REV_PATH, custos_rev_in)    # persiste custos de revenda
+    _save_json(USINAS_REV_PATH, usinas_rev_in)    # persiste usinas de revenda
     try:
-        df, meta = processor.process(ped_path, cfg_path, pri_path, custos_in, cif_path)
-        df_main, df_exc = processor.partition_and_sort(df)
+        df, meta = processor.process(ped_path, cfg_path, pri_path, custos_in,
+                                     cif_path, custos_revenda=custos_rev_in,
+                                     usinas_revenda=usinas_rev_in)
+        df_main, df_exc, df_fob = processor.partition_and_sort(df)
         out_path = os.path.join(OUT_DIR, "Analise_de_Margem.xlsx")
-        excel_export.export_excel(df_main, df_exc, meta, out_path)
+        excel_export.export_excel(df_main, df_exc, df_fob, meta, out_path)
         resumo = processor.summarize(df)
         diag = processor.diagnostics(df)
         diag["n_excecoes"] = int(len(df_exc))
+        diag["n_fob"] = int(len(df_fob))
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 

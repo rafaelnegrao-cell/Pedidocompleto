@@ -50,6 +50,21 @@ body{
 @media(max-width:780px){.uploads.u3{grid-template-columns:1fr}}
 .hint-inline{font-size:12px;color:var(--texto-suave)}
 .backbar{display:flex;align-items:center;gap:14px;margin-bottom:6px;flex-wrap:wrap}
+.tabbar{display:flex;gap:4px;border-bottom:2px solid var(--borda);margin:18px 0 16px}
+.tabbar .tab{appearance:none;border:none;background:transparent;cursor:pointer;
+  font-family:inherit;font-size:13px;font-weight:600;color:var(--texto-suave);
+  padding:9px 16px;border-bottom:2px solid transparent;margin-bottom:-2px}
+.tabbar .tab:hover{color:var(--n1-verde)}
+.tabbar .tab.active{color:var(--n1-verde);border-bottom-color:var(--n1-verde)}
+.seg-head{font-size:13px;color:var(--texto);background:var(--zebra);
+  border:1px solid var(--borda);border-radius:8px;padding:9px 12px}
+.seg-head strong{color:var(--n1-verde)}
+table.consol{width:100%;border-collapse:collapse;font-size:13px}
+table.consol th{background:var(--n1-verde);color:#fff;font-weight:700;padding:9px 10px;text-align:left}
+table.consol th:not(:first-child),table.consol td:not(:first-child){text-align:right}
+table.consol td{padding:8px 10px;border-bottom:1px solid var(--borda)}
+table.consol tr:nth-child(even) td{background:var(--zebra)}
+table.consol tr.tot td{font-weight:700;border-top:2px solid var(--borda);background:#eef6f2}
 .drop{
   border:1.5px dashed var(--borda);border-radius:10px;padding:18px 14px;text-align:center;
   cursor:pointer;transition:.15s;background:#fafbfc;min-height:128px;

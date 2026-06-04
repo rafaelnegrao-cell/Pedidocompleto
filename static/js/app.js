@@ -26,6 +26,8 @@ const fontes = { config: null, cif: null, prioridade: null };
 let pedidoFile = null;
 let RESUMO = null;
 let SAVED_CUSTOS = {};
+let SAVED_CUSTOS_REV = {};
+let SAVED_USINAS_REV = {};
 
 /* ---------- dropzones ---------- */
 document.querySelectorAll('.drop input[type="file"]').forEach((inp) => {
@@ -106,7 +108,10 @@ async function carregarCarteira(useFile) {
       r = await (await fetch("/carteira")).json();
     }
     if (!r.ok) throw new Error(r.error || "Falha ao carregar carteira.");
-    RESUMO = r; SAVED_CUSTOS = r.custos || SAVED_CUSTOS;
+    RESUMO = r;
+    SAVED_CUSTOS = r.custos || SAVED_CUSTOS;
+    SAVED_CUSTOS_REV = r.custos_revenda || SAVED_CUSTOS_REV;
+    SAVED_USINAS_REV = r.usinas_revenda || SAVED_USINAS_REV;
     renderPainel();
     showView("painel");
   } catch (err) { showMsg("#msg-carteira", err.message, "err"); }
@@ -116,9 +121,21 @@ $("#btn-carteira").addEventListener("click", () => { if (pedidoFile) carregarCar
 $("#btn-continuar").addEventListener("click", () => carregarCarteira(false));
 $("#btn-voltar").addEventListener("click", () => showView("import"));
 
+/* ---------- abas do painel ---------- */
+document.querySelectorAll(".tabbar .tab").forEach((b) => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll(".tabbar .tab").forEach((x) => x.classList.toggle("active", x === b));
+    const t = b.dataset.tab;
+    ["envasado", "revenda", "consolidado"].forEach((n) =>
+      $(`#pane-${n}`).classList.toggle("hidden", n !== t));
+  });
+});
+
 /* ---------- tela 2: painel + MC ao vivo ---------- */
 function renderPainel() {
   $("#painel-carteira").textContent = `${RESUMO.n_pedidos} pedidos · ${RESUMO.n_linhas} linhas`;
+
+  // cards de MP (envasado)
   const grid = $("#mp-grid"); grid.innerHTML = "";
   const mps = Object.keys(RESUMO.por_mp).filter((m) => RESUMO.por_mp[m].tem_mp);
   mps.forEach((mp) => {
@@ -127,38 +144,91 @@ function renderPainel() {
     const row = document.createElement("div");
     row.className = "mp-card";
     row.innerHTML = `
-      <div class="mp-top">
-        <div class="mp-nome">${mp}</div>
-        <div class="mp-vol">${TON(info.peso)} · ${info.n_linhas} linha(s)</div>
-      </div>
-      <div class="mp-input">
-        <span class="pre">R$/saca 50kg</span>
+      <div class="mp-top"><div class="mp-nome">${mp}</div>
+        <div class="mp-vol">${TON(info.peso)} · ${info.n_linhas} linha(s)</div></div>
+      <div class="mp-input"><span class="pre">R$/saca 50kg</span>
         <input type="text" inputmode="decimal" data-mp="${mp}" value="${v}" placeholder="0,00">
-        <span class="mp-kg" data-kg="${mp}">— /kg</span>
-      </div>
+        <span class="mp-kg" data-kg="${mp}">— /kg</span></div>
       <div class="mp-mc" data-mc="${mp}">MC: —</div>`;
     grid.appendChild(row);
   });
   grid.querySelectorAll("input[data-mp]").forEach((inp) => inp.addEventListener("input", recompute));
+
+  // cards de revenda (custo exato + usina)
+  const revGrid = $("#rev-grid"); revGrid.innerHTML = "";
+  const revs = RESUMO.por_revenda || {}; const revCods = Object.keys(revs);
+  $("#rev-empty").classList.toggle("hidden", revCods.length > 0);
+  revCods.forEach((cod) => {
+    const info = revs[cod];
+    const v = SAVED_CUSTOS_REV[cod] != null ? SAVED_CUSTOS_REV[cod] : "";
+    const u = SAVED_USINAS_REV[cod] != null ? SAVED_USINAS_REV[cod] : "";
+    const row = document.createElement("div");
+    row.className = "mp-card";
+    row.innerHTML = `
+      <div class="mp-top"><div class="mp-nome">${info.nome} <span class="mp-cod">#${cod}</span></div>
+        <div class="mp-vol">${TON(info.peso)} · ${info.n_linhas} linha(s)</div></div>
+      <div class="mp-input"><span class="pre">R$/saca 50kg</span>
+        <input type="text" inputmode="decimal" data-rev="${cod}" value="${v}" placeholder="0,00">
+        <span class="mp-kg" data-revkg="${cod}">— /kg</span></div>
+      <div class="mp-input" style="margin-top:6px"><span class="pre">Usina</span>
+        <input type="text" data-revusina="${cod}" value="${u}" placeholder="usina negociada" style="width:auto;flex:1;text-align:left"></div>
+      <div class="mp-mc" data-revmc="${cod}">MC: —</div>`;
+    revGrid.appendChild(row);
+  });
+  revGrid.querySelectorAll("input[data-rev]").forEach((inp) => inp.addEventListener("input", recompute));
+
   $("#link-download").classList.add("hidden");
   showMsg("#msg-pedido", "", "info");
   $("#diag-box").classList.add("hidden");
   recompute();
 }
 
+function segHead(el, label, peso, mc, valor) {
+  const pct = valor ? (mc / valor) * 100 : 0;
+  el.innerHTML = `<strong>${label}</strong> · ${TON(peso)} · MC <span class="${mc < 0 ? 'neg' : 'pos'}">${BRL(mc)} (${PCT(pct)})</span>`;
+}
+
 function recompute() {
   if (!RESUMO) return;
+  const cmap = {};   // chave (MP ou codigo) -> R$/saca
   let totalCusto = 0;
+
+  // envasado: cards + custo
   document.querySelectorAll("#mp-grid input[data-mp]").forEach((inp) => {
     const mp = inp.dataset.mp, info = RESUMO.por_mp[mp];
-    const saca = parseNum(inp.value), kg = saca / 50;
+    const saca = parseNum(inp.value); cmap[mp] = saca; const kg = saca / 50;
     $(`[data-kg="${mp}"]`).textContent = saca > 0 ? BRL(kg) + " /kg" : "— /kg";
-    const custoMP = kg * info.peso;
-    totalCusto += custoMP;
-    const mc = info.valor - info.outras - custoMP;
-    const mcp = info.valor ? (mc / info.valor) * 100 : 0;
+    const custoMP = kg * info.peso; totalCusto += custoMP;
+    const mc = info.valor - info.outras - custoMP, mcp = info.valor ? (mc / info.valor) * 100 : 0;
     $(`[data-mc="${mp}"]`).innerHTML = `MC: <strong>${BRL(mc)}</strong> <span class="${mc < 0 ? 'neg' : 'pos'}">(${PCT(mcp)})</span>`;
   });
+  // revenda: cards + custo
+  document.querySelectorAll("#rev-grid input[data-rev]").forEach((inp) => {
+    const cod = inp.dataset.rev, info = (RESUMO.por_revenda || {})[cod]; if (!info) return;
+    const saca = parseNum(inp.value); cmap[cod] = saca; const kg = saca / 50;
+    $(`[data-revkg="${cod}"]`).textContent = saca > 0 ? BRL(kg) + " /kg" : "— /kg";
+    const custo = kg * info.peso; totalCusto += custo;
+    const mc = info.valor - info.outras - custo, mcp = info.valor ? (mc / info.valor) * 100 : 0;
+    $(`[data-revmc="${cod}"]`).innerHTML = `MC: <strong>${BRL(mc)}</strong> <span class="${mc < 0 ? 'neg' : 'pos'}">(${PCT(mcp)})</span>`;
+  });
+
+  // por mix (consolidado ao vivo) usando peso por chave
+  const mix = RESUMO.por_mix || {};
+  const linhas = []; let envPeso = 0, envValor = 0, envMC = 0;
+  Object.keys(mix).forEach((mv) => {
+    const info = mix[mv];
+    let custo = 0;
+    Object.keys(info.chaves || {}).forEach((k) => { custo += ((cmap[k] || 0) / 50) * info.chaves[k]; });
+    const mc = info.valor - info.outras - custo;
+    linhas.push({ mv, peso: info.peso, valor: info.valor, mc });
+    if (!/revenda/i.test(mv)) { envPeso += info.peso; envValor += info.valor; envMC += mc; }
+  });
+  const revMix = linhas.find((l) => /revenda/i.test(l.mv)) || { peso: 0, valor: 0, mc: 0 };
+
+  segHead($("#env-head"), "Envasado (Empacotado + Especial)", envPeso, envMC, envValor);
+  segHead($("#rev-head"), "Revenda (custo exato de compra)", revMix.peso, revMix.mc, revMix.valor);
+
+  // KPIs gerais
   const mcTotal = RESUMO.total_valor - RESUMO.total_outras - totalCusto;
   const mcPct = RESUMO.total_valor ? (mcTotal / RESUMO.total_valor) * 100 : 0;
   const kpis = [
@@ -172,6 +242,18 @@ function recompute() {
   const box = $("#kpis-topo"); box.innerHTML = "";
   kpis.forEach((k) => { const el = document.createElement("div"); el.className = "kpi " + k.cls;
     el.innerHTML = `<div class="lbl">${k.lbl}</div><div class="val">${k.val}</div>`; box.appendChild(el); });
+
+  // tabela consolidada por mix
+  const ord = ["AÇUCAR EMPACOTADO", "AÇUCAR ESPECIAL", "REVENDA"];
+  linhas.sort((a, b) => (ord.indexOf(a.mv) + 99 * (ord.indexOf(a.mv) < 0)) - (ord.indexOf(b.mv) + 99 * (ord.indexOf(b.mv) < 0)));
+  let html = `<table class="consol"><thead><tr><th>Mix de Produto</th><th>Volume</th><th>Faturamento</th><th>MC (R$)</th><th>MC (%)</th></tr></thead><tbody>`;
+  linhas.forEach((l) => {
+    const p = l.valor ? (l.mc / l.valor) * 100 : 0;
+    html += `<tr><td>${l.mv}</td><td>${TON(l.peso)}</td><td>${BRL(l.valor)}</td><td class="${l.mc < 0 ? 'neg' : 'pos'}">${BRL(l.mc)}</td><td class="${l.mc < 0 ? 'neg' : 'pos'}">${PCT(p)}</td></tr>`;
+  });
+  html += `<tr class="tot"><td>TOTAL GERAL</td><td>${TON(RESUMO.total_peso)}</td><td>${BRL(RESUMO.total_valor)}</td><td class="${mcTotal < 0 ? 'neg' : 'pos'}">${BRL(mcTotal)}</td><td class="${mcTotal < 0 ? 'neg' : 'pos'}">${PCT(mcPct)}</td></tr>`;
+  html += `</tbody></table>`;
+  $("#consol-table").innerHTML = html;
 }
 
 /* ---------- gerar planilha ---------- */
@@ -179,15 +261,20 @@ $("#btn-gerar").addEventListener("click", async () => {
   const btn = $("#btn-gerar");
   const custos = {};
   document.querySelectorAll("#mp-grid input[data-mp]").forEach((inp) => { custos[inp.dataset.mp] = parseNum(inp.value); });
+  const custos_revenda = {}, usinas_revenda = {};
+  document.querySelectorAll("#rev-grid input[data-rev]").forEach((inp) => { custos_revenda[inp.dataset.rev] = parseNum(inp.value); });
+  document.querySelectorAll("#rev-grid input[data-revusina]").forEach((inp) => { usinas_revenda[inp.dataset.revusina] = inp.value.trim(); });
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Gerando…';
   showMsg("#msg-pedido", "", "info");
   try {
     const d = await (await fetch("/generate", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ custos }) })).json();
+      body: JSON.stringify({ custos, custos_revenda, usinas_revenda }) })).json();
     if (!d.ok) throw new Error(d.error || "Falha ao gerar.");
     const g = d.diag || {}; const avisos = [];
+    if (g.n_revenda != null) avisos.push(`🧾 ${g.n_revenda} pedido(s) de revenda na aba "Revenda" (custo exato de compra).`);
     if (g.n_excecoes != null) avisos.push(`📑 ${g.n_excecoes} pedido(s) na aba "Pedidos em Atenção" (sem rota / MC negativa / bloqueado não priorizado).`);
+    if (g.n_fob != null) avisos.push(`🚚 ${g.n_fob} pedido(s) FOB na aba "Pedidos FOB - Retirada" (preencha a data agendada de retirada).`);
     if (g.n_sem_config) avisos.push(`🔎 ${g.n_sem_config} linha(s) com produto sem cadastro (Custo MP = 0).`);
     if (g.n_cidades_sem_rota) avisos.push(`🚚 ${g.n_cidades_sem_rota} linha(s) CIF sem cidade na Tabela de Rotas (frete = 0).`);
     const db = $("#diag-box");

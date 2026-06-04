@@ -41,6 +41,7 @@ COLMAP = {
     "previsao":      ["Previsão Entrega", "Previsao Entrega", "Prev Entrega",
                       "Previsão de Embarque", "Previsao Embarque", "Data Embarque",
                       "Previsão Embarque"],
+    "mix":           ["Mix Produtos", "Mix de Produtos", "Mix", "Mix Produto"],
 }
 
 # ---- TIPOS DE MP CANONICOS (coluna MP da aba Produtos) ----
@@ -342,13 +343,20 @@ def analyze(orders_path, config_path, priority_path, cif_path=None):
 # =====================================================================
 #  Etapa 3: processamento + calculo de margem
 # =====================================================================
-def process(orders_path, config_path, priority_path, custos_saca, cif_path=None):
+def process(orders_path, config_path, priority_path, custos_saca, cif_path=None,
+            custos_revenda=None, usinas_revenda=None):
     orders = _read_any(orders_path)
     cfg = load_config_index(config_path)
     prioridade = load_priority_set(priority_path)
     cif = frete_cif.load_cif_table(cif_path or config_path)
 
+    custos_revenda = custos_revenda or {}
+    usinas_revenda = usinas_revenda or {}
     custo_kg = {mp: to_number(v) / 50.0 for mp, v in custos_saca.items()}
+    custo_saca_map = {mp: to_number(v) for mp, v in custos_saca.items()}
+    # revenda: custo exato por codigo de produto (R$/saca de 50kg)
+    rev_saca_map = {str(k): to_number(v) for k, v in custos_revenda.items()}
+    rev_usina_map = {str(k): str(v) for k, v in usinas_revenda.items()}
 
     np_col = resolve(orders, COLMAP["nome_produto"], field_name="Produto")
     valor_col = resolve(orders, COLMAP["valor"], field_name="Valor")
@@ -363,10 +371,11 @@ def process(orders_path, config_path, priority_path, custos_saca, cif_path=None)
     icms_col = resolve(orders, COLMAP["icms"], required=False)
     emb_col = resolve(orders, COLMAP["embalagem"], required=False)
     df_col = resolve(orders, COLMAP["desc_financ"], required=False)
+    mix_col = resolve(orders, COLMAP["mix"], required=False)
 
     enr_cols = ["Tipo de Matéria Prima", "Linha de Produção", "Nome Curto",
                 "Pedido Priorizado", "Tipo Frete", "Destino da Rota",
-                "Faixa Frete (R$/t)"]
+                "Faixa Frete (R$/t)", "Custo MP (R$/saca 50kg)", "Usina (compra)"]
     calc_cols = [
         "Valor Venda c/ Imposto", "(-) ICMS", "(-) Custo Frete R$",
         "(-) Comissão", "(-) Embalagem", "(-) Bonificação",
@@ -386,6 +395,17 @@ def process(orders_path, config_path, priority_path, custos_saca, cif_path=None)
         info = _match_info(cfg, produto) or {"nome_curto": "", "mp": "", "linhas": {}}
         mp = info.get("mp", "")
         ped = _norm_code(row.get(pedido_col)) if pedido_col else ""
+
+        # classificacao do mix: REVENDA usa custo exato de compra (por codigo),
+        # nao a media de MP. Envasado (Empacotado/Especial) usa a media de MP.
+        mix_raw = str(row.get(mix_col, "")) if mix_col else ""
+        is_revenda = "revenda" in norm(mix_raw)
+        cod = _lead_code(produto)
+        if is_revenda:
+            mp = "REVENDA"
+            custo_saca_item = rev_saca_map.get(cod, 0.0)
+        else:
+            custo_saca_item = custo_saca_map.get(mp, 0.0)
 
         valor = to_number(row.get(valor_col))
         peso = to_number(row.get(peso_col))
@@ -423,7 +443,7 @@ def process(orders_path, config_path, priority_path, custos_saca, cif_path=None)
         comissao = (valor - frete) * com_pct
         embalagem = to_number(row.get(emb_col)) if emb_col else 0.0     # real do ERP
         desc_fin = to_number(row.get(df_col)) if df_col else 0.0        # real do ERP
-        custo_mp = custo_kg.get(mp, 0.0) * peso
+        custo_mp = (custo_saca_item / 50.0) * peso
 
         deducoes = icms + frete + comissao + embalagem + bonif + desc_fin + custo_mp
         mc = valor - deducoes
@@ -436,6 +456,8 @@ def process(orders_path, config_path, priority_path, custos_saca, cif_path=None)
         orders.at[i, "Tipo Frete"] = tipo_frete
         orders.at[i, "Destino da Rota"] = destino_rota
         orders.at[i, "Faixa Frete (R$/t)"] = round(tarifa_t, 2)
+        orders.at[i, "Custo MP (R$/saca 50kg)"] = round(custo_saca_item, 2)
+        orders.at[i, "Usina (compra)"] = rev_usina_map.get(cod, "") if is_revenda else ""
         orders.at[i, "Valor Venda c/ Imposto"] = round(valor, 2)
         orders.at[i, "(-) ICMS"] = round(icms, 2)
         orders.at[i, "(-) Custo Frete R$"] = round(frete, 2)
@@ -450,7 +472,8 @@ def process(orders_path, config_path, priority_path, custos_saca, cif_path=None)
     meta = {
         "enr_cols": enr_cols, "calc_cols": calc_cols,
         "money_cols": [
-            "Faixa Frete (R$/t)", "Valor Venda c/ Imposto", "(-) ICMS",
+            "Faixa Frete (R$/t)", "Custo MP (R$/saca 50kg)",
+            "Valor Venda c/ Imposto", "(-) ICMS",
             "(-) Custo Frete R$", "(-) Comissão", "(-) Embalagem",
             "(-) Bonificação", "(-) Desc. Financeiro", "(-) Custo MP R$",
             "Margem de Contribuição Nominal (MC$)",
@@ -485,15 +508,20 @@ def carteira_resumo(orders_path, config_path, priority_path, cif_path=None):
     alem de %CIF/FOB e %Bloqueado/Liberado por faturamento.
     O front calcula a MC ao vivo:  MC = Valor - outras - (custo_kg * Peso).
     """
-    df, _ = process(orders_path, config_path, priority_path, {}, cif_path)
+    df, _ = process(orders_path, config_path, priority_path, {}, cif_path, {}, {})
     valor = pd.to_numeric(df["Valor Venda c/ Imposto"], errors="coerce").fillna(0)
     mc0 = pd.to_numeric(df["Margem de Contribuição Nominal (MC$)"], errors="coerce").fillna(0)
     outras = valor - mc0  # custo MP = 0 aqui, logo isto e a soma das demais deducoes
 
     peso_col = resolve(df, COLMAP["peso_total"], required=False)
     peso = df[peso_col].map(to_number) if peso_col else pd.Series([0.0] * len(df))
+    np_col = resolve(df, COLMAP["nome_produto"], required=False)
     mp = df["Tipo de Matéria Prima"].fillna("").astype(str).str.strip()
     tf = df["Tipo Frete"].fillna("").astype(str).str.upper()
+    mix_col = resolve(df, COLMAP["mix"], required=False)
+    mixs = df[mix_col].fillna("").astype(str) if mix_col else pd.Series([""] * len(df))
+    is_rev = mixs.map(lambda x: "revenda" in norm(x))
+    env = ~is_rev
     fin_col = resolve(df, COLMAP["financeiro"], required=False)
     fin = df[fin_col].fillna("").astype(str) if fin_col else pd.Series([""] * len(df))
     fin_n = fin.map(norm)
@@ -501,9 +529,13 @@ def carteira_resumo(orders_path, config_path, priority_path, cif_path=None):
 
     total_valor = float(valor.sum())
 
+    # ENVASADO: por tipo de MP (exclui revenda)
     por_mp = {}
-    for m in sorted(set(mp), key=lambda x: _mp_sort_key(x) if x else (998, "")):
-        sel = mp == m
+    mp_env = mp.where(env, "")
+    for m in sorted(set(mp_env[env]), key=lambda x: _mp_sort_key(x) if x else (998, "")):
+        sel = env & (mp == m) if m else env & (mp == "")
+        if int(sel.sum()) == 0:
+            continue
         key = m if m else "(sem cadastro)"
         por_mp[key] = {
             "valor": round(float(valor[sel].sum()), 2),
@@ -511,6 +543,47 @@ def carteira_resumo(orders_path, config_path, priority_path, cif_path=None):
             "outras": round(float(outras[sel].sum()), 2),
             "n_linhas": int(sel.sum()),
             "tem_mp": bool(m),
+        }
+
+    # REVENDA: por codigo de produto (custo exato de compra)
+    cods = df[np_col].map(_lead_code) if np_col else pd.Series([""] * len(df))
+    nomes = df["Nome Curto"].fillna("").astype(str)
+    prod_full = df[np_col].fillna("").astype(str) if np_col else pd.Series([""] * len(df))
+    por_revenda = {}
+    for cod in sorted(set(cods[is_rev])):
+        sel = is_rev & (cods == cod)
+        nm = ""
+        for v in nomes[sel]:
+            if v.strip():
+                nm = v.strip(); break
+        if not nm:
+            nm = prod_full[sel].iloc[0] if int(sel.sum()) else cod
+        por_revenda[cod] = {
+            "nome": nm,
+            "valor": round(float(valor[sel].sum()), 2),
+            "peso": round(float(peso[sel].sum()), 2),
+            "outras": round(float(outras[sel].sum()), 2),
+            "n_linhas": int(sel.sum()),
+        }
+
+    # TOTAIS por mix (para o consolidado ao vivo): guarda peso por 'chave' de
+    # custo (MP para envasado; codigo do produto para revenda).
+    chave = cods.where(is_rev, mp)  # revenda -> codigo; envasado -> tipo de MP
+    por_mix = {}
+    for mv in sorted(set(mixs)):
+        if not str(mv).strip():
+            continue
+        sel = mixs == mv
+        chaves = {}
+        for k in set(chave[sel]):
+            kk = str(k)
+            chaves[kk] = round(float(peso[sel & (chave == k)].sum()), 2)
+        por_mix[mv] = {
+            "valor": round(float(valor[sel].sum()), 2),
+            "peso": round(float(peso[sel].sum()), 2),
+            "outras": round(float(outras[sel].sum()), 2),
+            "n_linhas": int(sel.sum()),
+            "chaves": chaves,
         }
 
     cif_val = float(valor[tf == "CIF"].sum())
@@ -529,6 +602,8 @@ def carteira_resumo(orders_path, config_path, priority_path, cif_path=None):
         "pct_cif": pct(cif_val), "pct_fob": pct(fob_val),
         "pct_bloqueado": pct(bloq_val), "pct_liberado": pct(lib_val),
         "por_mp": por_mp,
+        "por_revenda": por_revenda,
+        "por_mix": por_mix,
     }
 
 
@@ -550,13 +625,82 @@ def _sort_carteira(d, mc_asc=False):
     return d.drop(columns=["__fil", "__prio", "__mc", "__prev"])
 
 
+def _partition_env(env):
+    """Separa pedidos ENVASADOS em principal (priorizados + limpos) e atencao."""
+    if env.empty:
+        return env, env
+    prio = env["Pedido Priorizado"].astype(str).str.upper() == "SIM"
+    mc = pd.to_numeric(env["Margem de Contribuição Nominal (MC$)"], errors="coerce").fillna(0)
+    tf = env["Tipo Frete"].astype(str).str.upper()
+    destino = env["Destino da Rota"].fillna("").astype(str).str.strip()
+    sem_rota = (tf == "CIF") & (destino == "")
+    neg = mc < 0
+    fin_col = resolve(env, COLMAP["financeiro"], required=False)
+    bloq = env[fin_col].map(norm).str.contains("bloq", na=False) if fin_col else pd.Series(False, index=env.index)
+    excecao = (~prio) & (sem_rota | neg | bloq)
+    return _sort_carteira(env[~excecao], mc_asc=False), _sort_carteira(env[excecao], mc_asc=True)
+
+
+def _fob_sheet(df):
+    fob = df[df["Tipo Frete"].astype(str).str.upper() == "FOB"].copy()
+    if fob.empty:
+        return fob
+    fob.insert(0, "Data Agendada Retirada", "")
+    fil_col = resolve(fob, COLMAP["filial"], required=False)
+    prev_col = resolve(fob, COLMAP["previsao"], required=False)
+    fob["__fil"] = fob[fil_col].astype(str) if fil_col else ""
+    fob["__prev"] = pd.to_datetime(fob[prev_col], errors="coerce", dayfirst=True,
+                                   format="mixed") if prev_col else pd.NaT
+    return fob.sort_values(by=["__fil", "__prev"], ascending=[True, True],
+                           na_position="last").drop(columns=["__fil", "__prev"])
+
+
+def _consolidado(df):
+    """Resumo por mix de produto: volume (t), faturamento, MC R$ e MC%."""
+    mix_col = resolve(df, COLMAP["mix"], required=False)
+    peso_col = resolve(df, COLMAP["peso_total"], required=False)
+    mixs = df[mix_col].fillna("").astype(str) if mix_col else pd.Series(["(sem mix)"] * len(df))
+    peso = df[peso_col].map(to_number) if peso_col else pd.Series([0.0] * len(df))
+    valor = pd.to_numeric(df["Valor Venda c/ Imposto"], errors="coerce").fillna(0)
+    mc = pd.to_numeric(df["Margem de Contribuição Nominal (MC$)"], errors="coerce").fillna(0)
+    rows = []
+    for mv in sorted(set(mixs[mixs.str.strip() != ""])):
+        sel = mixs == mv
+        v = float(valor[sel].sum()); m = float(mc[sel].sum())
+        rows.append({"Mix de Produto": mv, "Volume (t)": round(float(peso[sel].sum()) / 1000, 2),
+                     "Faturamento (R$)": round(v, 2), "MC (R$)": round(m, 2),
+                     "MC (%)": round(m / v, 4) if v else 0.0})
+    v = float(valor.sum()); m = float(mc.sum())
+    rows.append({"Mix de Produto": "TOTAL GERAL", "Volume (t)": round(float(peso.sum()) / 1000, 2),
+                 "Faturamento (R$)": round(v, 2), "MC (R$)": round(m, 2),
+                 "MC (%)": round(m / v, 4) if v else 0.0})
+    return pd.DataFrame(rows, columns=["Mix de Produto", "Volume (t)", "Faturamento (R$)", "MC (R$)", "MC (%)"])
+
+
+def build_outputs(df):
+    """
+    Gera os DataFrames das abas:
+      - main : ENVASADO (Empacotado/Especial) limpo + priorizados
+      - exc  : ENVASADO em atencao (sem rota / MC neg / bloqueado, nao priorizado)
+      - rev  : REVENDA (custo exato de compra)
+      - fob  : todos os pedidos FOB (+ coluna manual de retirada)
+      - consol: resumo por mix de produto (volume e margem) + total
+    """
+    mix_col = resolve(df, COLMAP["mix"], required=False)
+    mixs = df[mix_col].fillna("").astype(str) if mix_col else pd.Series([""] * len(df))
+    is_rev = mixs.map(lambda x: "revenda" in norm(x))
+    env, rev = df[~is_rev], df[is_rev]
+    df_main, df_exc = _partition_env(env)
+    df_rev = _sort_carteira(rev, mc_asc=False)
+    df_fob = _fob_sheet(df)
+    df_consol = _consolidado(df)
+    return df_main, df_exc, df_rev, df_fob, df_consol
+
+
+# compatibilidade retroativa
 def partition_and_sort(df):
-    """
-    Separa a carteira em:
-      - principal: priorizados (sempre) + demais pedidos limpos
-      - excecoes : NAO priorizados que sejam sem rota CIF, MC negativa ou bloqueados
-    Ambas ordenadas por Filial -> Priorizados -> maior MC R$ -> Previsao de embarque.
-    """
+    """Particiona a carteira COMPLETA (envasado + revenda) em principal /
+    atencao / FOB. Revenda entra na principal com seu custo exato ja aplicado."""
     prio = df["Pedido Priorizado"].astype(str).str.upper() == "SIM"
     mc = pd.to_numeric(df["Margem de Contribuição Nominal (MC$)"], errors="coerce").fillna(0)
     tf = df["Tipo Frete"].astype(str).str.upper()
@@ -564,12 +708,9 @@ def partition_and_sort(df):
     sem_rota = (tf == "CIF") & (destino == "")
     neg = mc < 0
     fin_col = resolve(df, COLMAP["financeiro"], required=False)
-    if fin_col:
-        bloq = df[fin_col].map(norm).str.contains("bloq", na=False)
-    else:
-        bloq = pd.Series(False, index=df.index)
-
+    bloq = df[fin_col].map(norm).str.contains("bloq", na=False) if fin_col else pd.Series(False, index=df.index)
     excecao = (~prio) & (sem_rota | neg | bloq)
-    df_main = _sort_carteira(df[~excecao], mc_asc=False)   # maior MC primeiro
-    df_exc = _sort_carteira(df[excecao], mc_asc=True)       # pior MC primeiro
-    return df_main, df_exc
+    df_main = _sort_carteira(df[~excecao], mc_asc=False)
+    df_exc = _sort_carteira(df[excecao], mc_asc=True)
+    df_fob = _fob_sheet(df)
+    return df_main, df_exc, df_fob
