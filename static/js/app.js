@@ -47,6 +47,15 @@ async function loadState() {
   try {
     const d = await (await fetch("/state")).json();
     SAVED_CUSTOS = d.custos || {};
+    SAVED_CUSTOS_REV = d.custos_revenda || {};
+    SAVED_USINAS_REV = d.usinas_revenda || {};
+    // backup local (sobrevive a reinicios do servidor sem volume)
+    try {
+      const ls = JSON.parse(localStorage.getItem("n1_custos") || "{}");
+      if (!Object.keys(SAVED_CUSTOS).length && ls.custos) SAVED_CUSTOS = ls.custos;
+      if (!Object.keys(SAVED_CUSTOS_REV).length && ls.custos_revenda) SAVED_CUSTOS_REV = ls.custos_revenda;
+      if (!Object.keys(SAVED_USINAS_REV).length && ls.usinas_revenda) SAVED_USINAS_REV = ls.usinas_revenda;
+    } catch (e) { /* ignore */ }
     const labels = { config: "Config", cif: "CIF", prioridade: "Priorizados" };
     const partes = [];
     Object.keys(labels).forEach((k) => {
@@ -132,6 +141,25 @@ document.querySelectorAll(".tabbar .tab").forEach((b) => {
   });
 });
 
+/* ---------- coleta + auto-save dos custos ---------- */
+function collectCosts() {
+  const custos = {}, custos_revenda = {}, usinas_revenda = {};
+  document.querySelectorAll("#mp-grid input[data-mp]").forEach((i) => { custos[i.dataset.mp] = parseNum(i.value); });
+  document.querySelectorAll("#rev-grid input[data-rev]").forEach((i) => { custos_revenda[i.dataset.rev] = parseNum(i.value); });
+  document.querySelectorAll("#rev-grid input[data-revusina]").forEach((i) => { usinas_revenda[i.dataset.revusina] = i.value.trim(); });
+  return { custos, custos_revenda, usinas_revenda };
+}
+let _saveTimer = null;
+function scheduleSave() { clearTimeout(_saveTimer); _saveTimer = setTimeout(doSave, 600); }
+async function doSave() {
+  const payload = collectCosts();
+  try { localStorage.setItem("n1_custos", JSON.stringify(payload)); } catch (e) { /* ignore */ }
+  try {
+    await fetch("/custos", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  } catch (e) { /* offline: fica salvo no localStorage */ }
+}
+function onCostInput() { recompute(); scheduleSave(); }
+
 /* ---------- tela 2: painel + MC ao vivo ---------- */
 function renderPainel() {
   $("#painel-carteira").textContent = `${RESUMO.n_pedidos} pedidos · ${RESUMO.n_linhas} linhas`;
@@ -153,7 +181,7 @@ function renderPainel() {
       <div class="mp-mc" data-mc="${mp}">MC: —</div>`;
     grid.appendChild(row);
   });
-  grid.querySelectorAll("input[data-mp]").forEach((inp) => inp.addEventListener("input", recompute));
+  grid.querySelectorAll("input[data-mp]").forEach((inp) => inp.addEventListener("input", onCostInput));
 
   // cards de revenda: UMA LINHA DE PEDIDO por card (custo + usina por linha)
   const revGrid = $("#rev-grid"); revGrid.innerHTML = "";
@@ -180,7 +208,7 @@ function renderPainel() {
       <div class="mp-mc" data-revmc="${ln.idx}">MC: —</div>`;
     revGrid.appendChild(row);
   });
-  revGrid.querySelectorAll("input[data-rev]").forEach((inp) => inp.addEventListener("input", recompute));
+  revGrid.querySelectorAll("input[data-rev], input[data-revusina]").forEach((inp) => inp.addEventListener("input", onCostInput));
 
   $("#link-download").classList.add("hidden");
   showMsg("#msg-pedido", "", "info");
@@ -266,11 +294,7 @@ function recompute() {
 /* ---------- gerar planilha ---------- */
 $("#btn-gerar").addEventListener("click", async () => {
   const btn = $("#btn-gerar");
-  const custos = {};
-  document.querySelectorAll("#mp-grid input[data-mp]").forEach((inp) => { custos[inp.dataset.mp] = parseNum(inp.value); });
-  const custos_revenda = {}, usinas_revenda = {};
-  document.querySelectorAll("#rev-grid input[data-rev]").forEach((inp) => { custos_revenda[inp.dataset.rev] = parseNum(inp.value); });
-  document.querySelectorAll("#rev-grid input[data-revusina]").forEach((inp) => { usinas_revenda[inp.dataset.revusina] = inp.value.trim(); });
+  const { custos, custos_revenda, usinas_revenda } = collectCosts();
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Gerando…';
   showMsg("#msg-pedido", "", "info");
   try {

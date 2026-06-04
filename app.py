@@ -20,7 +20,10 @@ from werkzeug.utils import secure_filename
 from core import processor, excel_export
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-STATE_DIR = os.path.join(BASE_DIR, "data", "state")
+# Diretorio de estado PERSISTENTE: usa o volume do Railway se existir
+# (RAILWAY_VOLUME_MOUNT_PATH) ou a variavel DATA_DIR; senao, local (efemero).
+_PERSIST = os.environ.get("DATA_DIR") or os.environ.get("RAILWAY_VOLUME_MOUNT_PATH")
+STATE_DIR = os.path.join(_PERSIST, "n1_state") if _PERSIST else os.path.join(BASE_DIR, "data", "state")
 SRC_DIR = os.path.join(STATE_DIR, "sources")
 OUT_DIR = os.path.join(STATE_DIR, "out")
 os.makedirs(SRC_DIR, exist_ok=True)
@@ -87,6 +90,8 @@ def _state():
     return {
         "sources": sources,
         "custos": custos,
+        "custos_revenda": _load_json(CUSTOS_REV_PATH, {}),
+        "usinas_revenda": _load_json(USINAS_REV_PATH, {}),
         "mp_types": mp_types,
         "mp_err": mp_err,
         "carteira": carteira,
@@ -141,11 +146,15 @@ def sources():
 
 @app.route("/custos", methods=["POST"])
 def custos():
-    """Etapa 2: salva os custos de MP por saca (50kg)."""
+    """Auto-save dos custos digitados: MP por saca, custo e usina de revenda."""
     data = request.get_json(force=True, silent=True) or {}
-    custos_in = data.get("custos", {})
-    _save_json(CUSTOS_PATH, custos_in)
-    return jsonify({"ok": True, "custos": custos_in})
+    if "custos" in data:
+        _save_json(CUSTOS_PATH, data.get("custos") or {})
+    if "custos_revenda" in data:
+        _save_json(CUSTOS_REV_PATH, data.get("custos_revenda") or {})
+    if "usinas_revenda" in data:
+        _save_json(USINAS_REV_PATH, data.get("usinas_revenda") or {})
+    return jsonify({"ok": True})
 
 
 def _saved_pedidos():
