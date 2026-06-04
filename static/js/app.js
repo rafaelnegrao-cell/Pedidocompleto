@@ -16,10 +16,15 @@ function showMsg(sel, text, type) {
   const el = $(sel); el.className = "msg " + (type || "info");
   el.textContent = text; el.style.display = text ? "block" : "none";
 }
+function showView(name) {
+  $("#view-import").classList.toggle("hidden", name !== "import");
+  $("#view-painel").classList.toggle("hidden", name !== "painel");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
 
 const fontes = { config: null, cif: null, prioridade: null };
 let pedidoFile = null;
-let RESUMO = null;     // resumo da carteira
+let RESUMO = null;
 let SAVED_CUSTOS = {};
 
 /* ---------- dropzones ---------- */
@@ -50,11 +55,11 @@ async function loadState() {
     if (d.mp_err) showMsg("#msg-fontes", d.mp_err, "err");
 
     setCarteiraEnabled(d.fontes_ok);
-    // recarrega última carteira salva, se houver
     if (d.fontes_ok && d.carteira) {
       $("#carteira-status").innerHTML = `Última carteira: <strong>${d.carteira.name}</strong> (${d.carteira.saved})`;
-      const r = await (await fetch("/carteira")).json();
-      if (r.ok) { RESUMO = r; SAVED_CUSTOS = r.custos || SAVED_CUSTOS; renderPainel(); }
+      $("#btn-continuar").classList.remove("hidden");
+    } else {
+      $("#btn-continuar").classList.add("hidden");
     }
   } catch (e) { /* silencioso */ }
 }
@@ -63,11 +68,15 @@ function setCarteiraEnabled(ok) {
   const card = $("#card-carteira");
   card.style.opacity = ok ? "1" : ".5";
   card.querySelectorAll("input,button").forEach((el) => { el.disabled = !ok; });
-  if (ok) $("#btn-carteira").disabled = !pedidoFile;
-  if (!ok) $("#carteira-status").textContent = "Salve as Fontes na Etapa 1 primeiro.";
+  if (ok) {
+    $("#btn-carteira").disabled = !pedidoFile;
+    if (!$("#btn-continuar").classList.contains("hidden")) $("#btn-continuar").disabled = false;
+  } else {
+    $("#carteira-status").textContent = "Salve as Fontes acima primeiro.";
+  }
 }
 
-/* ---------- etapa 1 ---------- */
+/* ---------- tela 1: salvar fontes ---------- */
 $("#btn-fontes").addEventListener("click", async () => {
   const btn = $("#btn-fontes"), fd = new FormData(); let algum = false;
   ["config", "cif", "prioridade"].forEach((k) => { if (fontes[k]) { fd.append(k, fontes[k]); algum = true; } });
@@ -82,27 +91,34 @@ $("#btn-fontes").addEventListener("click", async () => {
   finally { btn.disabled = false; btn.textContent = "Salvar Fontes"; }
 });
 
-/* ---------- etapa 2: carregar carteira ---------- */
-$("#btn-carteira").addEventListener("click", async () => {
-  if (!pedidoFile) return;
-  const btn = $("#btn-carteira");
+/* ---------- tela 1 -> carregar carteira e avançar ---------- */
+async function carregarCarteira(useFile) {
+  const btn = useFile ? $("#btn-carteira") : $("#btn-continuar");
+  const txt = btn.textContent;
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Carregando…';
   showMsg("#msg-carteira", "", "info");
-  const fd = new FormData(); fd.append("pedidos", pedidoFile);
   try {
-    const r = await (await fetch("/carteira", { method: "POST", body: fd })).json();
+    let r;
+    if (useFile) {
+      const fd = new FormData(); fd.append("pedidos", pedidoFile);
+      r = await (await fetch("/carteira", { method: "POST", body: fd })).json();
+    } else {
+      r = await (await fetch("/carteira")).json();
+    }
     if (!r.ok) throw new Error(r.error || "Falha ao carregar carteira.");
     RESUMO = r; SAVED_CUSTOS = r.custos || SAVED_CUSTOS;
     renderPainel();
+    showView("painel");
   } catch (err) { showMsg("#msg-carteira", err.message, "err"); }
-  finally { btn.disabled = false; btn.textContent = "Carregar Carteira"; }
-});
+  finally { btn.disabled = false; btn.textContent = txt; }
+}
+$("#btn-carteira").addEventListener("click", () => { if (pedidoFile) carregarCarteira(true); });
+$("#btn-continuar").addEventListener("click", () => carregarCarteira(false));
+$("#btn-voltar").addEventListener("click", () => showView("import"));
 
-/* ---------- painel + MC ao vivo ---------- */
+/* ---------- tela 2: painel + MC ao vivo ---------- */
 function renderPainel() {
-  $("#painel").classList.remove("hidden");
-
-  // cards de MP (somente os com cadastro de MP)
+  $("#painel-carteira").textContent = `${RESUMO.n_pedidos} pedidos · ${RESUMO.n_linhas} linhas`;
   const grid = $("#mp-grid"); grid.innerHTML = "";
   const mps = Object.keys(RESUMO.por_mp).filter((m) => RESUMO.por_mp[m].tem_mp);
   mps.forEach((mp) => {
@@ -123,9 +139,10 @@ function renderPainel() {
       <div class="mp-mc" data-mc="${mp}">MC: —</div>`;
     grid.appendChild(row);
   });
-  grid.querySelectorAll("input[data-mp]").forEach((inp) => {
-    inp.addEventListener("input", recompute);
-  });
+  grid.querySelectorAll("input[data-mp]").forEach((inp) => inp.addEventListener("input", recompute));
+  $("#link-download").classList.add("hidden");
+  showMsg("#msg-pedido", "", "info");
+  $("#diag-box").classList.add("hidden");
   recompute();
 }
 
@@ -140,13 +157,10 @@ function recompute() {
     totalCusto += custoMP;
     const mc = info.valor - info.outras - custoMP;
     const mcp = info.valor ? (mc / info.valor) * 100 : 0;
-    const el = $(`[data-mc="${mp}"]`);
-    el.innerHTML = `MC: <strong>${BRL(mc)}</strong> <span class="${mc < 0 ? 'neg' : 'pos'}">(${PCT(mcp)})</span>`;
+    $(`[data-mc="${mp}"]`).innerHTML = `MC: <strong>${BRL(mc)}</strong> <span class="${mc < 0 ? 'neg' : 'pos'}">(${PCT(mcp)})</span>`;
   });
-
   const mcTotal = RESUMO.total_valor - RESUMO.total_outras - totalCusto;
   const mcPct = RESUMO.total_valor ? (mcTotal / RESUMO.total_valor) * 100 : 0;
-
   const kpis = [
     { lbl: "Valor total a faturar", val: BRL(RESUMO.total_valor), cls: "azul" },
     { lbl: "Peso total a faturar", val: TON(RESUMO.total_peso), cls: "azul" },
@@ -156,21 +170,15 @@ function recompute() {
     { lbl: "MC %", val: PCT(mcPct), cls: mcPct < 0 ? "alerta" : "ok" },
   ];
   const box = $("#kpis-topo"); box.innerHTML = "";
-  kpis.forEach((k) => {
-    const el = document.createElement("div");
-    el.className = "kpi " + k.cls;
-    el.innerHTML = `<div class="lbl">${k.lbl}</div><div class="val">${k.val}</div>`;
-    box.appendChild(el);
-  });
+  kpis.forEach((k) => { const el = document.createElement("div"); el.className = "kpi " + k.cls;
+    el.innerHTML = `<div class="lbl">${k.lbl}</div><div class="val">${k.val}</div>`; box.appendChild(el); });
 }
 
 /* ---------- gerar planilha ---------- */
 $("#btn-gerar").addEventListener("click", async () => {
   const btn = $("#btn-gerar");
   const custos = {};
-  document.querySelectorAll("#mp-grid input[data-mp]").forEach((inp) => {
-    custos[inp.dataset.mp] = parseNum(inp.value);
-  });
+  document.querySelectorAll("#mp-grid input[data-mp]").forEach((inp) => { custos[inp.dataset.mp] = parseNum(inp.value); });
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Gerando…';
   showMsg("#msg-pedido", "", "info");
   try {
@@ -185,7 +193,12 @@ $("#btn-gerar").addEventListener("click", async () => {
     const db = $("#diag-box");
     if (avisos.length) { db.classList.remove("hidden"); db.innerHTML = avisos.join("<br>"); } else db.classList.add("hidden");
     const dl = $("#link-download"); dl.href = d.download; dl.classList.remove("hidden");
-    showMsg("#msg-pedido", "Planilha gerada.", "info");
+    showMsg("#msg-pedido", "Planilha gerada. O download deve iniciar automaticamente.", "info");
+    try {
+      const a = document.createElement("a");
+      a.href = d.download; a.download = "Analise_de_Margem.xlsx"; a.style.display = "none";
+      document.body.appendChild(a); a.click(); setTimeout(() => a.remove(), 1000);
+    } catch (e) { /* usa o botao visivel */ }
   } catch (err) { showMsg("#msg-pedido", err.message, "err"); }
   finally { btn.disabled = false; btn.textContent = "Gerar Planilha de Pedido Completo"; }
 });

@@ -49,6 +49,7 @@ body{
 .uploads.u1{grid-template-columns:1fr;max-width:420px}
 @media(max-width:780px){.uploads.u3{grid-template-columns:1fr}}
 .hint-inline{font-size:12px;color:var(--texto-suave)}
+.backbar{display:flex;align-items:center;gap:14px;margin-bottom:6px;flex-wrap:wrap}
 .drop{
   border:1.5px dashed var(--borda);border-radius:10px;padding:18px 14px;text-align:center;
   cursor:pointer;transition:.15s;background:#fafbfc;min-height:128px;
