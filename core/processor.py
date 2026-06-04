@@ -29,6 +29,10 @@ COLMAP = {
     "comissao_pct":  ["% Comissao", "Percentual Comissao", "Comissao %",
                       "Perc Comissao", "Comissao (%)"],
     "bonificacao":   ["Bonificacao R$", "Bonificacao", "Bonif R$", "Bonif"],
+    "icms":          ["ICMS", "Valor ICMS", "ICMS R$"],
+    "embalagem":     ["Embalagem", "Valor Embalagem", "Embalagem R$"],
+    "desc_financ":   ["Desc Financ", "Desc Financeiro", "Desconto Financeiro",
+                      "Desc. Financeiro", "Desc Fin"],
     "tipo_frete":    ["Tipo Frete", "Frete", "Modalidade Frete", "Tipo de Frete"],
     "filial":        ["Filial", "Empresa", "Estabelecimento", "Unidade",
                       "Razao Social", "Origem"],  # ex.: "MATRIZ - ACUCAR NUMERO UM"
@@ -267,6 +271,28 @@ def load_priority_set(priority_path):
 # =====================================================================
 #  Etapa 1+2: analise
 # =====================================================================
+def mp_types_from_config(config_path):
+    """Lista os tipos de MP cadastrados no Config (aba Produtos), em ordem canonica.
+    Usado para montar os campos de custo ANTES de carregar os pedidos."""
+    cfg = load_config_index(config_path)
+    mps = {info["mp"] for info in cfg["by_cod"].values() if info.get("mp")}
+    return sorted(mps, key=_mp_sort_key)
+
+
+def diagnostics(df):
+    """Avisos derivados do resultado: produtos sem cadastro e cidades sem rota CIF."""
+    semmp = df["Tipo de Matéria Prima"].fillna("").astype(str).str.strip() == ""
+    sem_rota = (df["Tipo Frete"].astype(str) == "CIF") & \
+               (df["Destino da Rota"].fillna("").astype(str).str.strip() == "")
+    return {
+        "n_sem_config": int(semmp.sum()),
+        "produtos_sem_config": sorted(
+            df.loc[semmp, "Produto"].dropna().astype(str).str.strip().unique().tolist()
+        )[:50] if "Produto" in df.columns else [],
+        "n_cidades_sem_rota": int(sem_rota.sum()),
+    }
+
+
 def analyze(orders_path, config_path, priority_path, cif_path=None):
     orders = _read_any(orders_path)
     if orders.empty:
@@ -329,6 +355,9 @@ def process(orders_path, config_path, priority_path, custos_saca, cif_path=None)
     pedido_col = resolve(orders, COLMAP["pedido"], required=False)
     filial_col = resolve(orders, COLMAP["filial"], required=False)
     tf_col = resolve(orders, COLMAP["tipo_frete"], required=False)
+    icms_col = resolve(orders, COLMAP["icms"], required=False)
+    emb_col = resolve(orders, COLMAP["embalagem"], required=False)
+    df_col = resolve(orders, COLMAP["desc_financ"], required=False)
 
     enr_cols = ["Tipo de Matéria Prima", "Linha de Produção", "Nome Curto",
                 "Pedido Priorizado", "Tipo Frete", "Destino da Rota",
@@ -354,11 +383,14 @@ def process(orders_path, config_path, priority_path, custos_saca, cif_path=None)
         com_pct = to_number(row.get(com_col)) / 100.0  # coluna em pontos % (1,5 = 1,5%)
         bonif = to_number(row.get(bonif_col)) if bonif_col else 0.0
 
-        # origem (planta) e ICMS
+        # origem (planta) para frete CIF; ICMS real do arquivo (fallback 7/12)
         origem_uf = origem_uf_from_filial(row.get(filial_col)) if filial_col else UF_ORIGEM_PADRAO
         uf_cli = str(row.get(uf_col, "")).strip().upper()[:2]
-        aliquota = ICMS_INTERNA if uf_cli == origem_uf else ICMS_INTERESTADUAL
-        icms = valor * aliquota
+        if icms_col:
+            icms = to_number(row.get(icms_col))           # valor real do ERP
+        else:
+            aliquota = ICMS_INTERNA if uf_cli == origem_uf else ICMS_INTERESTADUAL
+            icms = valor * aliquota
 
         # linha de envase: linhas compativeis na planta da origem
         plant_key = _plant_key_from_uf(origem_uf)
@@ -380,8 +412,8 @@ def process(orders_path, config_path, priority_path, custos_saca, cif_path=None)
                 tarifa_t, destino_rota, frete = 0.0, "", 0.0
 
         comissao = (valor - frete) * com_pct
-        embalagem = 0.0
-        desc_fin = 0.0
+        embalagem = to_number(row.get(emb_col)) if emb_col else 0.0     # real do ERP
+        desc_fin = to_number(row.get(df_col)) if df_col else 0.0        # real do ERP
         custo_mp = custo_kg.get(mp, 0.0) * peso
 
         deducoes = icms + frete + comissao + embalagem + bonif + desc_fin + custo_mp
