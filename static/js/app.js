@@ -28,6 +28,7 @@ let RESUMO = null;
 let SAVED_CUSTOS = {};
 let SAVED_CUSTOS_REV = {};
 let SAVED_USINAS_REV = {};
+let REVLINES = {};   // idx -> linha de revenda
 
 /* ---------- dropzones ---------- */
 document.querySelectorAll('.drop input[type="file"]').forEach((inp) => {
@@ -154,25 +155,29 @@ function renderPainel() {
   });
   grid.querySelectorAll("input[data-mp]").forEach((inp) => inp.addEventListener("input", recompute));
 
-  // cards de revenda (custo exato + usina)
+  // cards de revenda: UMA LINHA DE PEDIDO por card (custo + usina por linha)
   const revGrid = $("#rev-grid"); revGrid.innerHTML = "";
-  const revs = RESUMO.por_revenda || {}; const revCods = Object.keys(revs);
-  $("#rev-empty").classList.toggle("hidden", revCods.length > 0);
-  revCods.forEach((cod) => {
-    const info = revs[cod];
-    const v = SAVED_CUSTOS_REV[cod] != null ? SAVED_CUSTOS_REV[cod] : "";
-    const u = SAVED_USINAS_REV[cod] != null ? SAVED_USINAS_REV[cod] : "";
+  REVLINES = {};
+  const linhas = RESUMO.revenda_linhas || [];
+  $("#rev-empty").classList.toggle("hidden", linhas.length > 0);
+  linhas.forEach((ln) => {
+    REVLINES[ln.idx] = ln;
+    const v = SAVED_CUSTOS_REV[ln.idx] != null ? SAVED_CUSTOS_REV[ln.idx] : "";
+    const u = SAVED_USINAS_REV[ln.idx] != null ? SAVED_USINAS_REV[ln.idx] : "";
+    const pedTxt = ln.pedido ? `Pedido ${ln.pedido}` : "";
+    const cliTxt = ln.cliente ? ` · ${ln.cliente}` : "";
     const row = document.createElement("div");
     row.className = "mp-card";
     row.innerHTML = `
-      <div class="mp-top"><div class="mp-nome">${info.nome} <span class="mp-cod">#${cod}</span></div>
-        <div class="mp-vol">${TON(info.peso)} · ${info.n_linhas} linha(s)</div></div>
+      <div class="mp-top"><div class="mp-nome">${ln.nome} <span class="mp-cod">#${ln.cod}</span></div>
+        <div class="mp-vol">${TON(ln.peso)}</div></div>
+      <div class="rev-ped">${pedTxt}${cliTxt}</div>
       <div class="mp-input"><span class="pre">R$/saca 50kg</span>
-        <input type="text" inputmode="decimal" data-rev="${cod}" value="${v}" placeholder="0,00">
-        <span class="mp-kg" data-revkg="${cod}">— /kg</span></div>
-      <div class="mp-input" style="margin-top:6px"><span class="pre">Usina</span>
-        <input type="text" data-revusina="${cod}" value="${u}" placeholder="usina negociada" style="width:auto;flex:1;text-align:left"></div>
-      <div class="mp-mc" data-revmc="${cod}">MC: —</div>`;
+        <input type="text" inputmode="decimal" data-rev="${ln.idx}" value="${v}" placeholder="0,00">
+        <span class="mp-kg" data-revkg="${ln.idx}">— /kg</span></div>
+      <div class="mp-input" style="margin-top:6px"><span class="pre">Usina / Contrato</span>
+        <input type="text" data-revusina="${ln.idx}" value="${u}" placeholder="usina / contrato negociado" style="width:auto;flex:1;text-align:left"></div>
+      <div class="mp-mc" data-revmc="${ln.idx}">MC: —</div>`;
     revGrid.appendChild(row);
   });
   revGrid.querySelectorAll("input[data-rev]").forEach((inp) => inp.addEventListener("input", recompute));
@@ -202,31 +207,33 @@ function recompute() {
     const mc = info.valor - info.outras - custoMP, mcp = info.valor ? (mc / info.valor) * 100 : 0;
     $(`[data-mc="${mp}"]`).innerHTML = `MC: <strong>${BRL(mc)}</strong> <span class="${mc < 0 ? 'neg' : 'pos'}">(${PCT(mcp)})</span>`;
   });
-  // revenda: cards + custo
+  // revenda: cada linha de pedido (custo + usina individuais)
+  let revPeso = 0, revValor = 0, revMC = 0;
   document.querySelectorAll("#rev-grid input[data-rev]").forEach((inp) => {
-    const cod = inp.dataset.rev, info = (RESUMO.por_revenda || {})[cod]; if (!info) return;
-    const saca = parseNum(inp.value); cmap[cod] = saca; const kg = saca / 50;
-    $(`[data-revkg="${cod}"]`).textContent = saca > 0 ? BRL(kg) + " /kg" : "— /kg";
-    const custo = kg * info.peso; totalCusto += custo;
-    const mc = info.valor - info.outras - custo, mcp = info.valor ? (mc / info.valor) * 100 : 0;
-    $(`[data-revmc="${cod}"]`).innerHTML = `MC: <strong>${BRL(mc)}</strong> <span class="${mc < 0 ? 'neg' : 'pos'}">(${PCT(mcp)})</span>`;
+    const idx = inp.dataset.rev, ln = REVLINES[idx]; if (!ln) return;
+    const saca = parseNum(inp.value); const kg = saca / 50;
+    $(`[data-revkg="${idx}"]`).textContent = saca > 0 ? BRL(kg) + " /kg" : "— /kg";
+    const custo = kg * ln.peso; totalCusto += custo;
+    const mc = ln.valor - ln.outras - custo, mcp = ln.valor ? (mc / ln.valor) * 100 : 0;
+    $(`[data-revmc="${idx}"]`).innerHTML = `MC: <strong>${BRL(mc)}</strong> <span class="${mc < 0 ? 'neg' : 'pos'}">(${PCT(mcp)})</span>`;
+    revPeso += ln.peso; revValor += ln.valor; revMC += mc;
   });
 
-  // por mix (consolidado ao vivo) usando peso por chave
+  // por mix (consolidado ao vivo): envasado via chaves de MP + revenda via linhas
   const mix = RESUMO.por_mix || {};
-  const linhas = []; let envPeso = 0, envValor = 0, envMC = 0;
+  const linhasMix = []; let envPeso = 0, envValor = 0, envMC = 0;
   Object.keys(mix).forEach((mv) => {
     const info = mix[mv];
     let custo = 0;
     Object.keys(info.chaves || {}).forEach((k) => { custo += ((cmap[k] || 0) / 50) * info.chaves[k]; });
     const mc = info.valor - info.outras - custo;
-    linhas.push({ mv, peso: info.peso, valor: info.valor, mc });
-    if (!/revenda/i.test(mv)) { envPeso += info.peso; envValor += info.valor; envMC += mc; }
+    linhasMix.push({ mv, peso: info.peso, valor: info.valor, mc });
+    envPeso += info.peso; envValor += info.valor; envMC += mc;
   });
-  const revMix = linhas.find((l) => /revenda/i.test(l.mv)) || { peso: 0, valor: 0, mc: 0 };
+  if (revValor || revPeso) linhasMix.push({ mv: "REVENDA", peso: revPeso, valor: revValor, mc: revMC });
 
   segHead($("#env-head"), "Envasado (Empacotado + Especial)", envPeso, envMC, envValor);
-  segHead($("#rev-head"), "Revenda (custo exato de compra)", revMix.peso, revMix.mc, revMix.valor);
+  segHead($("#rev-head"), "Revenda (custo exato por pedido)", revPeso, revMC, revValor);
 
   // KPIs gerais
   const mcTotal = RESUMO.total_valor - RESUMO.total_outras - totalCusto;
@@ -245,9 +252,9 @@ function recompute() {
 
   // tabela consolidada por mix
   const ord = ["AÇUCAR EMPACOTADO", "AÇUCAR ESPECIAL", "REVENDA"];
-  linhas.sort((a, b) => (ord.indexOf(a.mv) + 99 * (ord.indexOf(a.mv) < 0)) - (ord.indexOf(b.mv) + 99 * (ord.indexOf(b.mv) < 0)));
+  linhasMix.sort((a, b) => (ord.indexOf(a.mv) + 99 * (ord.indexOf(a.mv) < 0)) - (ord.indexOf(b.mv) + 99 * (ord.indexOf(b.mv) < 0)));
   let html = `<table class="consol"><thead><tr><th>Mix de Produto</th><th>Volume</th><th>Faturamento</th><th>MC (R$)</th><th>MC (%)</th></tr></thead><tbody>`;
-  linhas.forEach((l) => {
+  linhasMix.forEach((l) => {
     const p = l.valor ? (l.mc / l.valor) * 100 : 0;
     html += `<tr><td>${l.mv}</td><td>${TON(l.peso)}</td><td>${BRL(l.valor)}</td><td class="${l.mc < 0 ? 'neg' : 'pos'}">${BRL(l.mc)}</td><td class="${l.mc < 0 ? 'neg' : 'pos'}">${PCT(p)}</td></tr>`;
   });

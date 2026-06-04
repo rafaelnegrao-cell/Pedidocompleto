@@ -354,7 +354,8 @@ def process(orders_path, config_path, priority_path, custos_saca, cif_path=None,
     usinas_revenda = usinas_revenda or {}
     custo_kg = {mp: to_number(v) / 50.0 for mp, v in custos_saca.items()}
     custo_saca_map = {mp: to_number(v) for mp, v in custos_saca.items()}
-    # revenda: custo exato por codigo de produto (R$/saca de 50kg)
+    # revenda: custo exato e usina/contrato POR LINHA DE PEDIDO (chave = indice da linha),
+    # pois o mesmo produto pode vir de usinas diferentes com custos diferentes.
     rev_saca_map = {str(k): to_number(v) for k, v in custos_revenda.items()}
     rev_usina_map = {str(k): str(v) for k, v in usinas_revenda.items()}
 
@@ -403,7 +404,7 @@ def process(orders_path, config_path, priority_path, custos_saca, cif_path=None,
         cod = _lead_code(produto)
         if is_revenda:
             mp = "REVENDA"
-            custo_saca_item = rev_saca_map.get(cod, 0.0)
+            custo_saca_item = rev_saca_map.get(str(i), 0.0)   # por linha de pedido
         else:
             custo_saca_item = custo_saca_map.get(mp, 0.0)
 
@@ -457,7 +458,7 @@ def process(orders_path, config_path, priority_path, custos_saca, cif_path=None,
         orders.at[i, "Destino da Rota"] = destino_rota
         orders.at[i, "Faixa Frete (R$/t)"] = round(tarifa_t, 2)
         orders.at[i, "Custo MP (R$/saca 50kg)"] = round(custo_saca_item, 2)
-        orders.at[i, "Usina (compra)"] = rev_usina_map.get(cod, "") if is_revenda else ""
+        orders.at[i, "Usina (compra)"] = rev_usina_map.get(str(i), "") if is_revenda else ""
         orders.at[i, "Valor Venda c/ Imposto"] = round(valor, 2)
         orders.at[i, "(-) ICMS"] = round(icms, 2)
         orders.at[i, "(-) Custo Frete R$"] = round(frete, 2)
@@ -545,35 +546,37 @@ def carteira_resumo(orders_path, config_path, priority_path, cif_path=None):
             "tem_mp": bool(m),
         }
 
-    # REVENDA: por codigo de produto (custo exato de compra)
+    # REVENDA: cada LINHA de pedido individualmente (custo + usina por linha,
+    # pois o mesmo produto pode vir de usinas diferentes com custos distintos)
     cods = df[np_col].map(_lead_code) if np_col else pd.Series([""] * len(df))
     nomes = df["Nome Curto"].fillna("").astype(str)
     prod_full = df[np_col].fillna("").astype(str) if np_col else pd.Series([""] * len(df))
-    por_revenda = {}
-    for cod in sorted(set(cods[is_rev])):
-        sel = is_rev & (cods == cod)
-        nm = ""
-        for v in nomes[sel]:
-            if v.strip():
-                nm = v.strip(); break
-        if not nm:
-            nm = prod_full[sel].iloc[0] if int(sel.sum()) else cod
-        por_revenda[cod] = {
+    ped_series = df[ped_col].fillna("").astype(str) if ped_col else pd.Series([""] * len(df))
+    cli_col = resolve(df, ["Cliente", "Nome Cliente", "Razao Social", "Razão Social"], required=False)
+    cli_series = df[cli_col].fillna("").astype(str) if cli_col else pd.Series([""] * len(df))
+    revenda_linhas = []
+    for i in df.index[is_rev]:
+        nm = str(nomes.loc[i]).strip() or str(prod_full.loc[i])
+        revenda_linhas.append({
+            "idx": str(i),
+            "pedido": str(ped_series.loc[i]),
+            "cliente": str(cli_series.loc[i]),
+            "cod": str(cods.loc[i]),
             "nome": nm,
-            "valor": round(float(valor[sel].sum()), 2),
-            "peso": round(float(peso[sel].sum()), 2),
-            "outras": round(float(outras[sel].sum()), 2),
-            "n_linhas": int(sel.sum()),
-        }
+            "produto": str(prod_full.loc[i]),
+            "valor": round(float(valor.loc[i]), 2),
+            "peso": round(float(peso.loc[i]), 2),
+            "outras": round(float(outras.loc[i]), 2),
+        })
 
-    # TOTAIS por mix (para o consolidado ao vivo): guarda peso por 'chave' de
-    # custo (MP para envasado; codigo do produto para revenda).
-    chave = cods.where(is_rev, mp)  # revenda -> codigo; envasado -> tipo de MP
+    # TOTAIS por mix de ENVASADO (consolidado ao vivo via peso por chave de MP).
+    # A revenda no consolidado e calculada a partir das linhas individuais no front.
+    chave = mp  # envasado -> tipo de MP
     por_mix = {}
     for mv in sorted(set(mixs)):
-        if not str(mv).strip():
+        if not str(mv).strip() or "revenda" in norm(mv):
             continue
-        sel = mixs == mv
+        sel = (mixs == mv)
         chaves = {}
         for k in set(chave[sel]):
             kk = str(k)
@@ -602,7 +605,7 @@ def carteira_resumo(orders_path, config_path, priority_path, cif_path=None):
         "pct_cif": pct(cif_val), "pct_fob": pct(fob_val),
         "pct_bloqueado": pct(bloq_val), "pct_liberado": pct(lib_val),
         "por_mp": por_mp,
-        "por_revenda": por_revenda,
+        "revenda_linhas": revenda_linhas,
         "por_mix": por_mix,
     }
 
