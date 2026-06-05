@@ -108,6 +108,17 @@ table.consol tr.tot td{font-weight:700;border-top:2px solid var(--borda);backgro
 .mp-cod{font-weight:600;font-size:11px;color:var(--texto-suave)}
 .rev-ped{font-size:11.5px;color:var(--texto-suave);margin:2px 0 8px}
 .rev-info{font-size:11px;color:var(--n1-verde);margin-top:7px;min-height:14px}
+.combo{position:relative}
+.combo-input{width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--borda);
+  border-radius:7px;font-family:inherit;font-size:12px}
+.combo-input:focus{outline:none;border-color:var(--n1-verde)}
+.combo-list{position:absolute;z-index:30;left:0;right:0;top:calc(100% + 2px);max-height:240px;
+  overflow:auto;background:#fff;border:1px solid var(--borda);border-radius:8px;
+  box-shadow:0 8px 24px rgba(0,0,0,.12)}
+.combo-opt{padding:7px 10px;font-size:11.5px;color:var(--texto);cursor:pointer;border-bottom:1px solid var(--zebra)}
+.combo-opt:hover{background:var(--zebra)}
+.combo-opt.sel{background:#eef6f2;font-weight:600}
+.combo-empty{padding:8px 10px;font-size:11.5px;color:var(--texto-suave)}
 .mp-top .mp-vol{font-size:11.5px;color:var(--texto-suave);font-weight:600}
 .mp-card .mp-input{display:flex;align-items:center;gap:8px}
 .mp-card .mp-input .pre{font-size:11px;color:var(--texto-suave);font-weight:600}

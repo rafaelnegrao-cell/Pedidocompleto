@@ -782,6 +782,9 @@ def load_contratos(path):
     c_net = resolve(df, ["Preço Net R$/saca", "Preco Net R$/saca", "Net R$/saca",
                          "Preço Net Saca", "Preco Net Saca"], required=False)
     c_saca = resolve(df, ["Preço R$/saca", "Preco R$/saca", "R$/saca", "Preço Saca"], required=False)
+    c_sal_sc = resolve(df, ["Saldo (sacas) ▶ fórmula", "Saldo (sacas)", "Saldo sacas", "Saldo Sacas"], required=False)
+    c_sal_kg = resolve(df, ["Saldo (kg) ▶ fórmula", "Saldo (kg)", "Saldo kg"], required=False)
+    c_status = resolve(df, ["Status ▶ automático", "Status", "Situacao", "Situação"], required=False)
     out = []
     for k, (_, row) in enumerate(df.iterrows()):
         contrato = str(row.get(c_contr, "")).strip() if c_contr else ""
@@ -790,6 +793,8 @@ def load_contratos(path):
         net = to_number(row.get(c_net)) if c_net else 0.0
         if not net and c_saca:
             net = to_number(row.get(c_saca))
+        sal_sc = to_number(row.get(c_sal_sc)) if c_sal_sc else 0.0
+        sal_kg = to_number(row.get(c_sal_kg)) if c_sal_kg else 0.0
         out.append({
             "id": str(k),
             "contrato": contrato,
@@ -800,6 +805,9 @@ def load_contratos(path):
             "embalagem": (str(row.get(c_emb, "")).strip() if c_emb else ""),
             "planta": (str(row.get(c_planta, "")).strip() if c_planta else ""),
             "custo_saca": round(net, 2),
+            "saldo_sacas": round(sal_sc, 0),
+            "saldo_ton": round(sal_kg / 1000.0, 1) if sal_kg else round(sal_sc * 50 / 1000.0, 1),
+            "status": (str(row.get(c_status, "")).strip() if c_status else ""),
         })
     return out
 

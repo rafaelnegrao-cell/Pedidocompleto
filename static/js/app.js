@@ -160,8 +160,8 @@ function collectCosts() {
   const custos = {}, custos_revenda = {}, revenda_meta = {};
   document.querySelectorAll("#mp-grid input[data-mp]").forEach((i) => { custos[i.dataset.mp] = parseNum(i.value); });
   document.querySelectorAll("#rev-grid input[data-rev]").forEach((i) => { custos_revenda[i.dataset.rev] = parseNum(i.value); });
-  document.querySelectorAll("#rev-grid select[data-revcontrato]").forEach((sel) => {
-    const idx = sel.dataset.revcontrato, c = CONTRATOS_BY_ID[sel.value];
+  document.querySelectorAll("#rev-grid .combo-input[data-revcontrato]").forEach((inp) => {
+    const idx = inp.dataset.revcontrato, c = CONTRATOS_BY_ID[inp.dataset.selid || ""];
     revenda_meta[idx] = c
       ? { contrato_id: c.id, contrato: c.contrato, usina: c.usina, cidade_uf: c.cidade_uf, mp: c.mp }
       : { contrato_id: "", contrato: "", usina: "", cidade_uf: "" };
@@ -178,16 +178,51 @@ async function doSave() {
   } catch (e) { /* offline: fica salvo no localStorage */ }
 }
 function onCostInput() { recompute(); scheduleSave(); }
-function onContratoChange(ev) {
-  const sel = ev.target, idx = sel.dataset.revcontrato, c = CONTRATOS_BY_ID[sel.value];
-  const inp = document.querySelector(`#rev-grid input[data-rev="${idx}"]`);
-  const info = document.querySelector(`[data-revinfo="${idx}"]`);
-  if (c) {
-    if (inp) inp.value = toBR(Number(c.custo_saca).toFixed(2));
-    if (info) info.innerHTML = `Contrato: <strong>${c.contrato}</strong> · ${c.usina} · ${c.cidade_uf}`;
-  } else if (info) { info.innerHTML = ""; }
-  onCostInput();
+
+function _comboLabel(c) { return `${c.contrato} · ${c.usina}`; }
+function _closeCombos(except) {
+  document.querySelectorAll("#rev-grid .combo-list").forEach((l) => {
+    if (l !== except) l.classList.add("hidden");
+  });
 }
+function bindCombo(inp) {
+  const idx = inp.dataset.revcontrato;
+  const list = document.querySelector(`.combo-list[data-list="${idx}"]`);
+  if (!list) return;
+  const filtra = () => {
+    const q = inp.value.trim().toLowerCase();
+    list.querySelectorAll(".combo-opt").forEach((o) => {
+      o.classList.toggle("hidden", q && !o.dataset.search.includes(q));
+    });
+  };
+  inp.addEventListener("focus", () => { _closeCombos(list); list.classList.remove("hidden"); inp.select(); });
+  inp.addEventListener("input", () => { list.classList.remove("hidden"); filtra(); });
+  inp.addEventListener("blur", () => {
+    setTimeout(() => {
+      list.classList.add("hidden");
+      const c = CONTRATOS_BY_ID[inp.dataset.selid || ""];
+      inp.value = c ? _comboLabel(c) : "";   // restaura rótulo da selecao
+    }, 180);
+  });
+  list.querySelectorAll(".combo-opt").forEach((opt) => {
+    opt.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      const c = CONTRATOS_BY_ID[opt.dataset.cid]; if (!c) return;
+      inp.dataset.selid = c.id;
+      inp.value = _comboLabel(c);
+      list.querySelectorAll(".combo-opt").forEach((o) => o.classList.toggle("sel", o === opt));
+      list.classList.add("hidden");
+      const costInp = document.querySelector(`#rev-grid input[data-rev="${idx}"]`);
+      if (costInp) costInp.value = toBR(Number(c.custo_saca).toFixed(2));
+      const info = document.querySelector(`[data-revinfo="${idx}"]`);
+      if (info) info.innerHTML = `Contrato: <strong>${c.contrato}</strong> · ${c.usina} · ${c.cidade_uf} · saldo ${Number(c.saldo_sacas).toLocaleString("pt-BR")} sc (${c.saldo_ton} t)`;
+      onCostInput();
+    });
+  });
+}
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".combo")) _closeCombos(null);
+});
 
 /* ---------- tela 2: painel + MC ao vivo ---------- */
 function renderPainel() {
@@ -228,21 +263,30 @@ function renderPainel() {
     else v = (SAVED_CUSTOS_REV[ln.idx] != null ? SAVED_CUSTOS_REV[ln.idx] : "");
     const pedTxt = ln.pedido ? `Pedido ${ln.pedido}` : "";
     const cliTxt = ln.cliente ? ` · ${ln.cliente}` : "";
-    let opts = '<option value="">— selecione o contrato —</option>';
+    const selC = selId ? CONTRATOS_BY_ID[selId] : null;
+    const selLabel = selC ? `${selC.contrato} · ${selC.usina}` : "";
+    let optsHtml = "";
     CONTRATOS.forEach((c) => {
-      const lbl = `${c.contrato} · ${c.usina} · ${c.cidade_uf} · ${c.mp} · R$ ${Number(c.custo_saca).toFixed(2)}/saca`;
-      opts += `<option value="${c.id}"${c.id === selId ? " selected" : ""}>${lbl}</option>`;
+      const saldoTxt = c.saldo_sacas ? ` · saldo ${Number(c.saldo_sacas).toLocaleString("pt-BR")} sc (${c.saldo_ton} t)` : " · saldo 0";
+      const st = c.status ? ` · ${c.status}` : "";
+      const lbl = `${c.contrato} · ${c.usina} · ${c.cidade_uf} · ${c.mp} · R$ ${Number(c.custo_saca).toFixed(2)}/saca${saldoTxt}${st}`;
+      const search = `${c.contrato} ${c.usina} ${c.cidade_uf} ${c.mp} ${c.status}`.toLowerCase();
+      optsHtml += `<div class="combo-opt${c.id === selId ? " sel" : ""}" data-cid="${c.id}" data-search="${search.replace(/"/g, "")}">${lbl}</div>`;
     });
-    const infoTxt = (meta.usina || meta.cidade_uf)
-      ? `Contrato: <strong>${meta.contrato || "-"}</strong> · ${meta.usina || "-"} · ${meta.cidade_uf || "-"}` : "";
+    const infoTxt = selC
+      ? `Contrato: <strong>${selC.contrato}</strong> · ${selC.usina} · ${selC.cidade_uf} · saldo ${Number(selC.saldo_sacas).toLocaleString("pt-BR")} sc (${selC.saldo_ton} t)`
+      : ((meta.usina || meta.cidade_uf) ? `Contrato: <strong>${meta.contrato || "-"}</strong> · ${meta.usina || "-"} · ${meta.cidade_uf || "-"}` : "");
     const row = document.createElement("div");
     row.className = "mp-card";
     row.innerHTML = `
       <div class="mp-top"><div class="mp-nome">${ln.nome} <span class="mp-cod">#${ln.cod}</span></div>
         <div class="mp-vol">${TON(ln.peso)}</div></div>
       <div class="rev-ped">${pedTxt}${cliTxt}</div>
-      <div class="mp-input"><span class="pre">Contrato</span>
-        <select data-revcontrato="${ln.idx}" ${CONTRATOS.length ? "" : "disabled"} style="flex:1;min-width:0;padding:7px 8px;border:1px solid var(--borda);border-radius:7px;font-family:inherit;font-size:12px">${opts}</select></div>
+      <div class="combo" data-combo="${ln.idx}">
+        <input type="text" class="combo-input" data-revcontrato="${ln.idx}" data-selid="${selId}"
+               value="${selLabel}" placeholder="Buscar contrato (nº, usina, cidade, MP)..." autocomplete="off" ${CONTRATOS.length ? "" : "disabled"}>
+        <div class="combo-list hidden" data-list="${ln.idx}">${optsHtml || '<div class="combo-empty">Importe o Controle de Compras na Etapa 1</div>'}</div>
+      </div>
       <div class="mp-input" style="margin-top:6px"><span class="pre">R$/saca 50kg</span>
         <input type="text" inputmode="decimal" data-rev="${ln.idx}" value="${toBR(v)}" placeholder="0,00">
         <span class="mp-kg" data-revkg="${ln.idx}">— /kg</span></div>
@@ -251,7 +295,7 @@ function renderPainel() {
     revGrid.appendChild(row);
   });
   revGrid.querySelectorAll("input[data-rev]").forEach((inp) => inp.addEventListener("input", onCostInput));
-  revGrid.querySelectorAll("select[data-revcontrato]").forEach((sel) => sel.addEventListener("change", onContratoChange));
+  revGrid.querySelectorAll(".combo-input").forEach(bindCombo);
 
   $("#link-download").classList.add("hidden");
   showMsg("#msg-pedido", "", "info");
