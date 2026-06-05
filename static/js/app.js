@@ -9,9 +9,18 @@ const TON = (kg) => (Number(kg || 0) / 1000).toLocaleString("pt-BR",
   { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + " t";
 const parseNum = (s) => {
   if (s == null) return 0;
-  let t = String(s).replace(/\./g, "").replace(",", ".").replace(/[^0-9.\-]/g, "");
-  const n = parseFloat(t); return isNaN(n) ? 0 : n;
+  let t = String(s).trim();
+  if (!t) return 0;
+  const hasC = t.includes(","), hasD = t.includes(".");
+  if (hasC && hasD) t = t.replace(/\./g, "").replace(",", ".");   // BR: . milhar, , decimal
+  else if (hasC) t = t.replace(",", ".");                          // só vírgula = decimal
+  else if (hasD && t.split(".").length > 2) t = t.replace(/\./g, ""); // vários pontos = milhar
+  // um único ponto: tratado como decimal (ex.: 86.5 -> 86.5)
+  t = t.replace(/[^0-9.\-]/g, "");
+  const n = parseFloat(t);
+  return isNaN(n) ? 0 : n;
 };
+const toBR = (v) => (v === "" || v == null) ? "" : String(v).replace(".", ",");
 function showMsg(sel, text, type) {
   const el = $(sel); el.className = "msg " + (type || "info");
   el.textContent = text; el.style.display = text ? "block" : "none";
@@ -174,7 +183,7 @@ function onContratoChange(ev) {
   const inp = document.querySelector(`#rev-grid input[data-rev="${idx}"]`);
   const info = document.querySelector(`[data-revinfo="${idx}"]`);
   if (c) {
-    if (inp) inp.value = String(Number(c.custo_saca).toFixed(2)).replace(".", ",");
+    if (inp) inp.value = toBR(Number(c.custo_saca).toFixed(2));
     if (info) info.innerHTML = `Contrato: <strong>${c.contrato}</strong> · ${c.usina} · ${c.cidade_uf}`;
   } else if (info) { info.innerHTML = ""; }
   onCostInput();
@@ -196,7 +205,7 @@ function renderPainel() {
       <div class="mp-top"><div class="mp-nome">${mp}</div>
         <div class="mp-vol">${TON(info.peso)} · ${info.n_linhas} linha(s)</div></div>
       <div class="mp-input"><span class="pre">R$/saca 50kg</span>
-        <input type="text" inputmode="decimal" data-mp="${mp}" value="${v}" placeholder="0,00">
+        <input type="text" inputmode="decimal" data-mp="${mp}" value="${toBR(v)}" placeholder="0,00">
         <span class="mp-kg" data-kg="${mp}">— /kg</span></div>
       <div class="mp-mc" data-mc="${mp}">MC: —</div>`;
     grid.appendChild(row);
@@ -210,9 +219,13 @@ function renderPainel() {
   $("#rev-empty").classList.toggle("hidden", linhas.length > 0);
   linhas.forEach((ln) => {
     REVLINES[ln.idx] = ln;
-    const v = SAVED_CUSTOS_REV[ln.idx] != null ? SAVED_CUSTOS_REV[ln.idx] : "";
     const meta = SAVED_REVENDA_META[ln.idx] || {};
     const selId = meta.contrato_id || "";
+    // custo: se ha contrato vinculado, usa o custo do contrato (autoritativo);
+    // senao, usa o valor salvo manualmente.
+    let v;
+    if (selId && CONTRATOS_BY_ID[selId]) v = CONTRATOS_BY_ID[selId].custo_saca;
+    else v = (SAVED_CUSTOS_REV[ln.idx] != null ? SAVED_CUSTOS_REV[ln.idx] : "");
     const pedTxt = ln.pedido ? `Pedido ${ln.pedido}` : "";
     const cliTxt = ln.cliente ? ` · ${ln.cliente}` : "";
     let opts = '<option value="">— selecione o contrato —</option>';
@@ -231,7 +244,7 @@ function renderPainel() {
       <div class="mp-input"><span class="pre">Contrato</span>
         <select data-revcontrato="${ln.idx}" ${CONTRATOS.length ? "" : "disabled"} style="flex:1;min-width:0;padding:7px 8px;border:1px solid var(--borda);border-radius:7px;font-family:inherit;font-size:12px">${opts}</select></div>
       <div class="mp-input" style="margin-top:6px"><span class="pre">R$/saca 50kg</span>
-        <input type="text" inputmode="decimal" data-rev="${ln.idx}" value="${v}" placeholder="0,00">
+        <input type="text" inputmode="decimal" data-rev="${ln.idx}" value="${toBR(v)}" placeholder="0,00">
         <span class="mp-kg" data-revkg="${ln.idx}">— /kg</span></div>
       <div class="rev-info" data-revinfo="${ln.idx}">${infoTxt}</div>
       <div class="mp-mc" data-revmc="${ln.idx}">MC: —</div>`;
