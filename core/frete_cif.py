@@ -141,31 +141,33 @@ def has_city(cif, cidade):
 
 def resolve_frete(cif, cidade, origem_plant, peso_kg):
     """
-    Retorna (tarifa_por_tonelada, destino_rota, custo_frete_rs, status).
+    Retorna (tarifa_por_tonelada, destino_rota, custo_frete_rs, status, faixa_label).
     origem_plant: 'PR' (Sertanopolis) ou 'SP' (Itaju), da filial do pedido.
     status: ok | sem_tabela | cidade_nao_encontrada | faixa_nao_encontrada
+    faixa_label: cabecalho da faixa de peso enquadrada (ex.: 'Até 5.000 kg') ou ''.
     """
     if not cif:
-        return (0.0, "", 0.0, "sem_tabela")
+        return (0.0, "", 0.0, "sem_tabela", "")
     c = norm(cidade)
     plant = (origem_plant or "").upper()[:2]
     row = cif["by_plant"].get((c, plant))
     if row is None:
         row = cif["by_city"].get(c)
     if row is None:
-        return (0.0, "", 0.0, "cidade_nao_encontrada")
+        return (0.0, "", 0.0, "cidade_nao_encontrada", "")
 
     destino = ""
     if cif["rota_col"]:
         destino = str(row.get(cif["rota_col"], "")).strip()
 
-    tarifa = None
+    tarifa, faixa_label = None, ""
     for (lo, hi, col) in cif["bands"]:          # ordenado por limite superior
         if peso_kg >= lo and (peso_kg <= hi or hi == INF):
             tarifa = to_number(row.get(col))
+            faixa_label = str(col).strip()
             break
     if tarifa is None:
-        return (0.0, destino, 0.0, "faixa_nao_encontrada")
+        return (0.0, destino, 0.0, "faixa_nao_encontrada", "")
 
     custo = (tarifa / 1000.0) * peso_kg
-    return (round(tarifa, 2), destino, round(custo, 2), "ok")
+    return (round(tarifa, 2), destino, round(custo, 2), "ok", faixa_label)

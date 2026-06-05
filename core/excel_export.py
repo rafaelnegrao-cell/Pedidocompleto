@@ -24,6 +24,8 @@ RISCO = "DC3545"
 RISCO_FILL = "FAECE7"
 FOB_FILL = "E8F5F0"
 FOB_TXT = "006B4F"
+ATENCAO_FILL = "FFF3CD"   # amarelo claro (peso < 2.000 kg)
+ATENCAO_TXT = "9C6500"    # ambar escuro p/ contraste
 FONTE = "Arial"
 
 FMT_MOEDA = u'"R$" #,##0.00'
@@ -50,6 +52,7 @@ def _write_sheet(ws, df, meta, fob_highlight=True):
     neg_fill = PatternFill("solid", fgColor=RISCO_FILL)
     fob_fill = PatternFill("solid", fgColor=FOB_FILL)
     zebra_fill = PatternFill("solid", fgColor=ZEBRA)
+    atencao_fill = PatternFill("solid", fgColor=ATENCAO_FILL)
 
     for j, col in enumerate(cols, start=1):
         c = ws.cell(row=1, column=j, value=str(col))
@@ -78,12 +81,18 @@ def _write_sheet(ws, df, meta, fob_highlight=True):
                 color, bold = RISCO, True
             if fob_highlight and is_fob and col == tf_col:
                 color, bold = FOB_TXT, True
+            faixa_alerta = (col == "Faixa de Peso CIF" and isinstance(val, str)
+                            and "ABAIXO DE 2.000" in val)
+            if faixa_alerta:
+                color, bold = ATENCAO_TXT, True
             c.font = Font(name=FONTE, size=9, color=color, bold=bold)
             if col in money:
                 c.number_format = FMT_MOEDA
             elif col in pct:
                 c.number_format = FMT_PCT
-            if negativo:
+            if faixa_alerta:
+                c.fill = atencao_fill          # destaque do peso < 2.000 kg
+            elif negativo:
                 c.fill = neg_fill
             elif fob_highlight and is_fob:
                 c.fill = fob_fill
@@ -145,14 +154,20 @@ def _empty_sheet(ws, msg, width=70):
     ws.column_dimensions["A"].width = width
 
 
-def export_excel(df_main, df_exc, df_fob, meta, out_path):
+def export_excel(df_full, df_main, df_exc, df_fob, meta, out_path):
     wb = Workbook()
-    ws1 = wb.active
-    ws1.title = "Análise de Margem"      # todos os pedidos (revenda com custo exato)
+    ws0 = wb.active
+    ws0.title = "Carteira Completa"      # todos os pedidos, sem exclusao
+    if df_full is not None and not df_full.empty:
+        _write_sheet(ws0, df_full, meta)
+    else:
+        _empty_sheet(ws0, "Nenhum pedido nesta carteira.")
+
+    ws1 = wb.create_sheet("Pedidos Elegíveis")  # limpos + priorizados
     if df_main is not None and not df_main.empty:
         _write_sheet(ws1, df_main, meta)
     else:
-        _empty_sheet(ws1, "Nenhum pedido nesta carteira.")
+        _empty_sheet(ws1, "Nenhum pedido elegível nesta carteira.")
 
     ws2 = wb.create_sheet("Pedidos em Atenção")
     if df_exc is not None and not df_exc.empty:

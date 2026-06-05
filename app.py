@@ -234,11 +234,13 @@ def generate():
         df, meta = processor.process(ped_path, cfg_path, pri_path, custos_in,
                                      cif_path, custos_revenda=custos_rev_in,
                                      usinas_revenda=usinas_rev_in)
-        df_main, df_exc, df_fob = processor.partition_and_sort(df)
+        df_full, df_main, df_exc, df_fob = processor.partition_and_sort(df)
         out_path = os.path.join(OUT_DIR, "Analise_de_Margem.xlsx")
-        excel_export.export_excel(df_main, df_exc, df_fob, meta, out_path)
+        excel_export.export_excel(df_full, df_main, df_exc, df_fob, meta, out_path)
         resumo = processor.summarize(df)
         diag = processor.diagnostics(df)
+        diag["n_total"] = int(len(df_full))
+        diag["n_elegiveis"] = int(len(df_main))
         diag["n_excecoes"] = int(len(df_exc))
         diag["n_fob"] = int(len(df_fob))
     except Exception as e:

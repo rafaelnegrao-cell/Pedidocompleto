@@ -376,7 +376,8 @@ def process(orders_path, config_path, priority_path, custos_saca, cif_path=None,
 
     enr_cols = ["Tipo de Matéria Prima", "Linha de Produção", "Nome Curto",
                 "Pedido Priorizado", "Tipo Frete", "Destino da Rota",
-                "Faixa Frete (R$/t)", "Custo MP (R$/saca 50kg)", "Usina (compra)"]
+                "Faixa Frete (R$/t)", "Faixa de Peso CIF",
+                "Custo MP (R$/saca 50kg)", "Usina (compra)"]
     calc_cols = [
         "Valor Venda c/ Imposto", "(-) ICMS", "(-) Custo Frete R$",
         "(-) Comissão", "(-) Embalagem", "(-) Bonificação",
@@ -430,16 +431,27 @@ def process(orders_path, config_path, priority_path, custos_saca, cif_path=None,
         # frete: CIF (Emitente) usa tabela; FOB (Destinatario) = 0 (cliente paga)
         tf_raw = str(tf_orig.loc[i]) if tf_orig is not None else ""
         is_fob = norm(tf_raw).startswith("destinat")
+        faixa_lbl = ""
         if is_fob:
             tipo_frete, destino_rota, tarifa_t, frete = "FOB", "(cliente paga)", 0.0, 0.0
         else:
             tipo_frete = "CIF"
             if cif:
                 cidade = row.get(cidade_col) if cidade_col else ""
-                tarifa_t, destino_rota, frete, _st = frete_cif.resolve_frete(
+                tarifa_t, destino_rota, frete, _st, faixa_lbl = frete_cif.resolve_frete(
                     cif, cidade, origem_uf, peso)
             else:
                 tarifa_t, destino_rota, frete = 0.0, "", 0.0
+
+        # celula da faixa de peso CIF (+ aviso quando peso < 2.000 kg)
+        if is_fob:
+            faixa_cel = "FOB"
+        elif faixa_lbl:
+            faixa_cel = faixa_lbl
+        else:
+            faixa_cel = "(sem faixa)"
+        if peso < 2000.0:
+            faixa_cel = (faixa_cel + " · " if faixa_cel else "") + "ABAIXO DE 2.000 KG"
 
         comissao = (valor - frete) * com_pct
         embalagem = to_number(row.get(emb_col)) if emb_col else 0.0     # real do ERP
@@ -457,6 +469,7 @@ def process(orders_path, config_path, priority_path, custos_saca, cif_path=None,
         orders.at[i, "Tipo Frete"] = tipo_frete
         orders.at[i, "Destino da Rota"] = destino_rota
         orders.at[i, "Faixa Frete (R$/t)"] = round(tarifa_t, 2)
+        orders.at[i, "Faixa de Peso CIF"] = faixa_cel
         orders.at[i, "Custo MP (R$/saca 50kg)"] = round(custo_saca_item, 2)
         orders.at[i, "Usina (compra)"] = rev_usina_map.get(str(i), "") if is_revenda else ""
         orders.at[i, "Valor Venda c/ Imposto"] = round(valor, 2)
@@ -621,8 +634,7 @@ def _sort_carteira(d, mc_asc=False):
     d["__fil"] = d[fil_col].astype(str) if fil_col else ""
     d["__prio"] = (d["Pedido Priorizado"].astype(str).str.upper() == "SIM").map({True: 0, False: 1})
     d["__mc"] = pd.to_numeric(d["Margem de Contribuição Nominal (MC$)"], errors="coerce").fillna(0)
-    d["__prev"] = pd.to_datetime(d[prev_col], errors="coerce", dayfirst=True,
-                                 format="mixed") if prev_col else pd.NaT
+    d["__prev"] = pd.to_datetime(d[prev_col], errors="coerce") if prev_col else pd.NaT
     d = d.sort_values(by=["__fil", "__prio", "__mc", "__prev"],
                       ascending=[True, True, mc_asc, True], na_position="last")
     return d.drop(columns=["__fil", "__prio", "__mc", "__prev"])
@@ -645,17 +657,35 @@ def _partition_env(env):
 
 
 def _fob_sheet(df):
+    """Aba FOB enxuta: data agendada de retirada (manual) + pedido, cliente,
+    filial, vendedor, data do pedido, produto, valor e margem de contribuicao."""
     fob = df[df["Tipo Frete"].astype(str).str.upper() == "FOB"].copy()
     if fob.empty:
         return fob
-    fob.insert(0, "Data Agendada Retirada", "")
     fil_col = resolve(fob, COLMAP["filial"], required=False)
     prev_col = resolve(fob, COLMAP["previsao"], required=False)
     fob["__fil"] = fob[fil_col].astype(str) if fil_col else ""
-    fob["__prev"] = pd.to_datetime(fob[prev_col], errors="coerce", dayfirst=True,
-                                   format="mixed") if prev_col else pd.NaT
-    return fob.sort_values(by=["__fil", "__prev"], ascending=[True, True],
-                           na_position="last").drop(columns=["__fil", "__prev"])
+    fob["__prev"] = pd.to_datetime(fob[prev_col], errors="coerce") if prev_col else pd.NaT
+    fob = fob.sort_values(by=["__fil", "__prev"], ascending=[True, True],
+                          na_position="last").drop(columns=["__fil", "__prev"])
+
+    ped_col = resolve(fob, COLMAP["pedido"], required=False)
+    cli_col = resolve(fob, ["Cliente", "Nome Cliente", "Razao Social", "Razão Social"], required=False)
+    vend_col = resolve(fob, ["Vendedor", "Representante", "Rep", "Vendedor/Rep"], required=False)
+    data_col = resolve(fob, ["Emissão Pedido", "Emissao Pedido", "Data Pedido",
+                             "Data do Pedido", "Data"], required=False)
+    prod_col = resolve(fob, COLMAP["nome_produto"], required=False)
+    desejadas = [ped_col, cli_col, fil_col, vend_col, data_col, prod_col,
+                 "Valor Venda c/ Imposto",
+                 "Margem de Contribuição Nominal (MC$)",
+                 "Margem de Contribuição Percentual (MC%)"]
+    cols = [c for c in desejadas if c and c in fob.columns]
+    slim = fob[cols].copy()
+    if data_col and data_col in slim.columns:
+        dt = pd.to_datetime(slim[data_col], errors="coerce")
+        slim[data_col] = dt.dt.strftime("%d/%m/%Y").where(dt.notna(), slim[data_col].astype(str))
+    slim.insert(0, "Data Agendada Retirada", "")
+    return slim
 
 
 def _consolidado(df):
@@ -713,7 +743,8 @@ def partition_and_sort(df):
     fin_col = resolve(df, COLMAP["financeiro"], required=False)
     bloq = df[fin_col].map(norm).str.contains("bloq", na=False) if fin_col else pd.Series(False, index=df.index)
     excecao = (~prio) & (sem_rota | neg | bloq)
-    df_main = _sort_carteira(df[~excecao], mc_asc=False)
-    df_exc = _sort_carteira(df[excecao], mc_asc=True)
+    df_full = _sort_carteira(df, mc_asc=False)              # todos os pedidos
+    df_main = _sort_carteira(df[~excecao], mc_asc=False)    # elegiveis
+    df_exc = _sort_carteira(df[excecao], mc_asc=True)        # atencao
     df_fob = _fob_sheet(df)
-    return df_main, df_exc, df_fob
+    return df_full, df_main, df_exc, df_fob
