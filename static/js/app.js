@@ -22,12 +22,14 @@ function showView(name) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-const fontes = { config: null, cif: null, prioridade: null };
+const fontes = { config: null, cif: null, prioridade: null, compras: null };
 let pedidoFile = null;
 let RESUMO = null;
 let SAVED_CUSTOS = {};
 let SAVED_CUSTOS_REV = {};
-let SAVED_USINAS_REV = {};
+let SAVED_REVENDA_META = {};
+let CONTRATOS = [];
+let CONTRATOS_BY_ID = {};
 let REVLINES = {};   // idx -> linha de revenda
 
 /* ---------- dropzones ---------- */
@@ -48,17 +50,19 @@ async function loadState() {
     const d = await (await fetch("/state")).json();
     SAVED_CUSTOS = d.custos || {};
     SAVED_CUSTOS_REV = d.custos_revenda || {};
-    SAVED_USINAS_REV = d.usinas_revenda || {};
+    SAVED_REVENDA_META = d.revenda_meta || {};
+    CONTRATOS = d.contratos || [];
+    CONTRATOS_BY_ID = {}; CONTRATOS.forEach((c) => { CONTRATOS_BY_ID[c.id] = c; });
     // backup local (sobrevive a reinicios do servidor sem volume)
     try {
       const ls = JSON.parse(localStorage.getItem("n1_custos") || "{}");
       if (!Object.keys(SAVED_CUSTOS).length && ls.custos) SAVED_CUSTOS = ls.custos;
       if (!Object.keys(SAVED_CUSTOS_REV).length && ls.custos_revenda) SAVED_CUSTOS_REV = ls.custos_revenda;
-      if (!Object.keys(SAVED_USINAS_REV).length && ls.usinas_revenda) SAVED_USINAS_REV = ls.usinas_revenda;
+      if (!Object.keys(SAVED_REVENDA_META).length && ls.revenda_meta) SAVED_REVENDA_META = ls.revenda_meta;
     } catch (e) { /* ignore */ }
-    const labels = { config: "Config", cif: "CIF", prioridade: "Priorizados" };
+    const labels = { config: "Config", cif: "CIF", prioridade: "Priorizados", compras: "Compras" };
     const partes = [];
-    Object.keys(labels).forEach((k) => {
+    ["config", "cif", "prioridade", "compras"].forEach((k) => {
       if (d.sources[k]) partes.push(`${labels[k]}: <strong>${d.sources[k].name}</strong> (${d.sources[k].saved})`);
     });
     const banner = $("#banner-fontes");
@@ -91,7 +95,7 @@ function setCarteiraEnabled(ok) {
 /* ---------- tela 1: salvar fontes ---------- */
 $("#btn-fontes").addEventListener("click", async () => {
   const btn = $("#btn-fontes"), fd = new FormData(); let algum = false;
-  ["config", "cif", "prioridade"].forEach((k) => { if (fontes[k]) { fd.append(k, fontes[k]); algum = true; } });
+  ["config", "cif", "prioridade", "compras"].forEach((k) => { if (fontes[k]) { fd.append(k, fontes[k]); algum = true; } });
   if (!algum) { showMsg("#msg-fontes", "Selecione ao menos um arquivo.", "err"); return; }
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Salvando…';
   try {
@@ -121,7 +125,8 @@ async function carregarCarteira(useFile) {
     RESUMO = r;
     SAVED_CUSTOS = r.custos || SAVED_CUSTOS;
     SAVED_CUSTOS_REV = r.custos_revenda || SAVED_CUSTOS_REV;
-    SAVED_USINAS_REV = r.usinas_revenda || SAVED_USINAS_REV;
+    SAVED_REVENDA_META = r.revenda_meta || SAVED_REVENDA_META;
+    if (r.contratos) { CONTRATOS = r.contratos; CONTRATOS_BY_ID = {}; CONTRATOS.forEach((c) => { CONTRATOS_BY_ID[c.id] = c; }); }
     renderPainel();
     showView("painel");
   } catch (err) { showMsg("#msg-carteira", err.message, "err"); }
@@ -143,11 +148,16 @@ document.querySelectorAll(".tabbar .tab").forEach((b) => {
 
 /* ---------- coleta + auto-save dos custos ---------- */
 function collectCosts() {
-  const custos = {}, custos_revenda = {}, usinas_revenda = {};
+  const custos = {}, custos_revenda = {}, revenda_meta = {};
   document.querySelectorAll("#mp-grid input[data-mp]").forEach((i) => { custos[i.dataset.mp] = parseNum(i.value); });
   document.querySelectorAll("#rev-grid input[data-rev]").forEach((i) => { custos_revenda[i.dataset.rev] = parseNum(i.value); });
-  document.querySelectorAll("#rev-grid input[data-revusina]").forEach((i) => { usinas_revenda[i.dataset.revusina] = i.value.trim(); });
-  return { custos, custos_revenda, usinas_revenda };
+  document.querySelectorAll("#rev-grid select[data-revcontrato]").forEach((sel) => {
+    const idx = sel.dataset.revcontrato, c = CONTRATOS_BY_ID[sel.value];
+    revenda_meta[idx] = c
+      ? { contrato_id: c.id, contrato: c.contrato, usina: c.usina, cidade_uf: c.cidade_uf, mp: c.mp }
+      : { contrato_id: "", contrato: "", usina: "", cidade_uf: "" };
+  });
+  return { custos, custos_revenda, revenda_meta };
 }
 let _saveTimer = null;
 function scheduleSave() { clearTimeout(_saveTimer); _saveTimer = setTimeout(doSave, 600); }
@@ -159,6 +169,16 @@ async function doSave() {
   } catch (e) { /* offline: fica salvo no localStorage */ }
 }
 function onCostInput() { recompute(); scheduleSave(); }
+function onContratoChange(ev) {
+  const sel = ev.target, idx = sel.dataset.revcontrato, c = CONTRATOS_BY_ID[sel.value];
+  const inp = document.querySelector(`#rev-grid input[data-rev="${idx}"]`);
+  const info = document.querySelector(`[data-revinfo="${idx}"]`);
+  if (c) {
+    if (inp) inp.value = String(Number(c.custo_saca).toFixed(2)).replace(".", ",");
+    if (info) info.innerHTML = `Contrato: <strong>${c.contrato}</strong> · ${c.usina} · ${c.cidade_uf}`;
+  } else if (info) { info.innerHTML = ""; }
+  onCostInput();
+}
 
 /* ---------- tela 2: painel + MC ao vivo ---------- */
 function renderPainel() {
@@ -191,24 +211,34 @@ function renderPainel() {
   linhas.forEach((ln) => {
     REVLINES[ln.idx] = ln;
     const v = SAVED_CUSTOS_REV[ln.idx] != null ? SAVED_CUSTOS_REV[ln.idx] : "";
-    const u = SAVED_USINAS_REV[ln.idx] != null ? SAVED_USINAS_REV[ln.idx] : "";
+    const meta = SAVED_REVENDA_META[ln.idx] || {};
+    const selId = meta.contrato_id || "";
     const pedTxt = ln.pedido ? `Pedido ${ln.pedido}` : "";
     const cliTxt = ln.cliente ? ` · ${ln.cliente}` : "";
+    let opts = '<option value="">— selecione o contrato —</option>';
+    CONTRATOS.forEach((c) => {
+      const lbl = `${c.contrato} · ${c.usina} · ${c.cidade_uf} · ${c.mp} · R$ ${Number(c.custo_saca).toFixed(2)}/saca`;
+      opts += `<option value="${c.id}"${c.id === selId ? " selected" : ""}>${lbl}</option>`;
+    });
+    const infoTxt = (meta.usina || meta.cidade_uf)
+      ? `Contrato: <strong>${meta.contrato || "-"}</strong> · ${meta.usina || "-"} · ${meta.cidade_uf || "-"}` : "";
     const row = document.createElement("div");
     row.className = "mp-card";
     row.innerHTML = `
       <div class="mp-top"><div class="mp-nome">${ln.nome} <span class="mp-cod">#${ln.cod}</span></div>
         <div class="mp-vol">${TON(ln.peso)}</div></div>
       <div class="rev-ped">${pedTxt}${cliTxt}</div>
-      <div class="mp-input"><span class="pre">R$/saca 50kg</span>
+      <div class="mp-input"><span class="pre">Contrato</span>
+        <select data-revcontrato="${ln.idx}" ${CONTRATOS.length ? "" : "disabled"} style="flex:1;min-width:0;padding:7px 8px;border:1px solid var(--borda);border-radius:7px;font-family:inherit;font-size:12px">${opts}</select></div>
+      <div class="mp-input" style="margin-top:6px"><span class="pre">R$/saca 50kg</span>
         <input type="text" inputmode="decimal" data-rev="${ln.idx}" value="${v}" placeholder="0,00">
         <span class="mp-kg" data-revkg="${ln.idx}">— /kg</span></div>
-      <div class="mp-input" style="margin-top:6px"><span class="pre">Usina / Contrato</span>
-        <input type="text" data-revusina="${ln.idx}" value="${u}" placeholder="usina / contrato negociado" style="width:auto;flex:1;text-align:left"></div>
+      <div class="rev-info" data-revinfo="${ln.idx}">${infoTxt}</div>
       <div class="mp-mc" data-revmc="${ln.idx}">MC: —</div>`;
     revGrid.appendChild(row);
   });
-  revGrid.querySelectorAll("input[data-rev], input[data-revusina]").forEach((inp) => inp.addEventListener("input", onCostInput));
+  revGrid.querySelectorAll("input[data-rev]").forEach((inp) => inp.addEventListener("input", onCostInput));
+  revGrid.querySelectorAll("select[data-revcontrato]").forEach((sel) => sel.addEventListener("change", onContratoChange));
 
   $("#link-download").classList.add("hidden");
   showMsg("#msg-pedido", "", "info");
@@ -294,13 +324,13 @@ function recompute() {
 /* ---------- gerar planilha ---------- */
 $("#btn-gerar").addEventListener("click", async () => {
   const btn = $("#btn-gerar");
-  const { custos, custos_revenda, usinas_revenda } = collectCosts();
+  const { custos, custos_revenda, revenda_meta } = collectCosts();
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Gerando…';
   showMsg("#msg-pedido", "", "info");
   try {
     const d = await (await fetch("/generate", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ custos, custos_revenda, usinas_revenda }) })).json();
+      body: JSON.stringify({ custos, custos_revenda, revenda_meta }) })).json();
     if (!d.ok) throw new Error(d.error || "Falha ao gerar.");
     const g = d.diag || {}; const avisos = [];
     if (g.n_revenda != null) avisos.push(`🧾 ${g.n_revenda} pedido(s) de revenda na aba "Revenda" (custo exato de compra).`);

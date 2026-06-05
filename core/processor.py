@@ -344,20 +344,19 @@ def analyze(orders_path, config_path, priority_path, cif_path=None):
 #  Etapa 3: processamento + calculo de margem
 # =====================================================================
 def process(orders_path, config_path, priority_path, custos_saca, cif_path=None,
-            custos_revenda=None, usinas_revenda=None):
+            custos_revenda=None, revenda_meta=None):
     orders = _read_any(orders_path)
     cfg = load_config_index(config_path)
     prioridade = load_priority_set(priority_path)
     cif = frete_cif.load_cif_table(cif_path or config_path)
 
     custos_revenda = custos_revenda or {}
-    usinas_revenda = usinas_revenda or {}
+    revenda_meta = revenda_meta or {}
     custo_kg = {mp: to_number(v) / 50.0 for mp, v in custos_saca.items()}
     custo_saca_map = {mp: to_number(v) for mp, v in custos_saca.items()}
-    # revenda: custo exato e usina/contrato POR LINHA DE PEDIDO (chave = indice da linha),
-    # pois o mesmo produto pode vir de usinas diferentes com custos diferentes.
+    # revenda: custo exato POR LINHA (chave = indice) + metadados do contrato
     rev_saca_map = {str(k): to_number(v) for k, v in custos_revenda.items()}
-    rev_usina_map = {str(k): str(v) for k, v in usinas_revenda.items()}
+    rev_meta_map = {str(k): (v if isinstance(v, dict) else {}) for k, v in revenda_meta.items()}
 
     np_col = resolve(orders, COLMAP["nome_produto"], field_name="Produto")
     valor_col = resolve(orders, COLMAP["valor"], field_name="Valor")
@@ -377,7 +376,8 @@ def process(orders_path, config_path, priority_path, custos_saca, cif_path=None,
     enr_cols = ["Tipo de Matéria Prima", "Linha de Produção", "Nome Curto",
                 "Pedido Priorizado", "Tipo Frete", "Destino da Rota",
                 "Faixa Frete (R$/t)", "Faixa de Peso CIF",
-                "Custo MP (R$/saca 50kg)", "Usina (compra)"]
+                "Custo MP (R$/saca 50kg)",
+                "Contrato (compra)", "Usina (compra)", "Cidade/UF (compra)"]
     calc_cols = [
         "Valor Venda c/ Imposto", "(-) ICMS", "(-) Custo Frete R$",
         "(-) Comissão", "(-) Embalagem", "(-) Bonificação",
@@ -471,7 +471,10 @@ def process(orders_path, config_path, priority_path, custos_saca, cif_path=None,
         orders.at[i, "Faixa Frete (R$/t)"] = round(tarifa_t, 2)
         orders.at[i, "Faixa de Peso CIF"] = faixa_cel
         orders.at[i, "Custo MP (R$/saca 50kg)"] = round(custo_saca_item, 2)
-        orders.at[i, "Usina (compra)"] = rev_usina_map.get(str(i), "") if is_revenda else ""
+        _m = rev_meta_map.get(str(i), {}) if is_revenda else {}
+        orders.at[i, "Usina (compra)"] = _m.get("usina", "")
+        orders.at[i, "Cidade/UF (compra)"] = _m.get("cidade_uf", "")
+        orders.at[i, "Contrato (compra)"] = _m.get("contrato", "")
         orders.at[i, "Valor Venda c/ Imposto"] = round(valor, 2)
         orders.at[i, "(-) ICMS"] = round(icms, 2)
         orders.at[i, "(-) Custo Frete R$"] = round(frete, 2)
@@ -748,3 +751,85 @@ def partition_and_sort(df):
     df_exc = _sort_carteira(df[excecao], mc_asc=True)        # atencao
     df_fob = _fob_sheet(df)
     return df_full, df_main, df_exc, df_fob
+
+
+def load_contratos(path):
+    """Le a aba 'CADASTRO DE COMPRAS' do controle de compras e devolve a lista
+    de contratos selecionaveis (cada linha = uma opcao), com custo NET por saca."""
+    try:
+        sheets = pd.read_excel(path, sheet_name=None, dtype=str)
+    except Exception:
+        return []
+    target = None
+    for name, d in sheets.items():
+        if "cadastro" in norm(name) and "compra" in norm(name):
+            target = d; break
+    if target is None:
+        for name, d in sheets.items():
+            if d is not None and resolve(d, ["Nº Contrato", "No Contrato",
+                    "Numero Contrato", "Contrato"], required=False):
+                target = d; break
+    if target is None or target.empty:
+        return []
+    df = target.dropna(how="all")
+    c_contr = resolve(df, ["Nº Contrato", "No Contrato", "Numero Contrato", "N Contrato", "Contrato"], required=False)
+    c_usina = resolve(df, ["Fornecedor (Usina / Destilaria)", "Fornecedor", "Usina", "Destilaria"], required=False)
+    c_cuf = resolve(df, ["Cidade/UF", "Cidade UF", "Cidade", "Municipio/UF"], required=False)
+    c_mp = resolve(df, ["Matéria Prima", "Materia Prima", "MP"], required=False)
+    c_tipo = resolve(df, ["Tipo Açúcar", "Tipo Acucar", "Tipo de Açúcar"], required=False)
+    c_emb = resolve(df, ["Embalagem"], required=False)
+    c_planta = resolve(df, ["Planta Origem", "Planta", "Origem"], required=False)
+    c_net = resolve(df, ["Preço Net R$/saca", "Preco Net R$/saca", "Net R$/saca",
+                         "Preço Net Saca", "Preco Net Saca"], required=False)
+    c_saca = resolve(df, ["Preço R$/saca", "Preco R$/saca", "R$/saca", "Preço Saca"], required=False)
+    out = []
+    for k, (_, row) in enumerate(df.iterrows()):
+        contrato = str(row.get(c_contr, "")).strip() if c_contr else ""
+        if not contrato or contrato.lower() == "nan":
+            continue
+        net = to_number(row.get(c_net)) if c_net else 0.0
+        if not net and c_saca:
+            net = to_number(row.get(c_saca))
+        out.append({
+            "id": str(k),
+            "contrato": contrato,
+            "usina": (str(row.get(c_usina, "")).strip() if c_usina else ""),
+            "cidade_uf": (str(row.get(c_cuf, "")).strip() if c_cuf else ""),
+            "mp": (str(row.get(c_mp, "")).strip() if c_mp else ""),
+            "tipo": (str(row.get(c_tipo, "")).strip() if c_tipo else ""),
+            "embalagem": (str(row.get(c_emb, "")).strip() if c_emb else ""),
+            "planta": (str(row.get(c_planta, "")).strip() if c_planta else ""),
+            "custo_saca": round(net, 2),
+        })
+    return out
+
+
+def _revenda_sheet(df):
+    """Aba dedicada de revenda: pedido, cliente, filial, vendedor, produto,
+    contrato, usina, cidade/UF, custo NET por saca, valor e MC."""
+    mix_col = resolve(df, COLMAP["mix"], required=False)
+    mixs = df[mix_col].fillna("").astype(str) if mix_col else pd.Series([""] * len(df))
+    rev = df[mixs.map(lambda x: "revenda" in norm(x))].copy()
+    if rev.empty:
+        return rev
+    ped = resolve(rev, COLMAP["pedido"], required=False)
+    cli = resolve(rev, ["Cliente", "Nome Cliente", "Razao Social", "Razão Social"], required=False)
+    fil = resolve(rev, COLMAP["filial"], required=False)
+    vend = resolve(rev, ["Vendedor", "Representante", "Rep"], required=False)
+    prod = resolve(rev, COLMAP["nome_produto"], required=False)
+    if fil:
+        rev = rev.sort_values(by=[c for c in [fil, ped] if c], na_position="last")
+    desejadas = [ped, cli, fil, vend, prod,
+                 "Contrato (compra)", "Usina (compra)", "Cidade/UF (compra)",
+                 "Custo MP (R$/saca 50kg)", "Valor Venda c/ Imposto",
+                 "Margem de Contribuição Nominal (MC$)",
+                 "Margem de Contribuição Percentual (MC%)"]
+    cols = [c for c in desejadas if c and c in rev.columns]
+    return rev[cols].copy()
+
+
+def build_outputs_v2(df):
+    """Retorna (carteira_completa, elegiveis, atencao, fob, revenda)."""
+    df_full, df_main, df_exc, df_fob = partition_and_sort(df)
+    df_rev = _revenda_sheet(df)
+    return df_full, df_main, df_exc, df_fob, df_rev

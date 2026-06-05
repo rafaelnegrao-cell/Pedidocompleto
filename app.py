@@ -32,8 +32,10 @@ os.makedirs(OUT_DIR, exist_ok=True)
 META_PATH = os.path.join(STATE_DIR, "meta.json")
 CUSTOS_PATH = os.path.join(STATE_DIR, "custos.json")
 CUSTOS_REV_PATH = os.path.join(STATE_DIR, "custos_revenda.json")
-USINAS_REV_PATH = os.path.join(STATE_DIR, "usinas_revenda.json")
+REVENDA_META_PATH = os.path.join(STATE_DIR, "revenda_meta.json")
 SRC_KEYS = ("config", "cif", "prioridade")
+OPT_SRC_KEYS = ("compras",)          # controle de compras (opcional, p/ revenda)
+ALL_SRC_KEYS = SRC_KEYS + OPT_SRC_KEYS
 
 ALLOWED = {".xlsx", ".xls", ".csv", ".txt"}
 MAX_MB = 30
@@ -69,7 +71,7 @@ def _state():
     meta = _load_json(META_PATH, {})
     custos = _load_json(CUSTOS_PATH, {})
     sources = {}
-    for k in SRC_KEYS:
+    for k in ALL_SRC_KEYS:
         p = _saved_path(k)
         sources[k] = ({"name": meta.get(k, {}).get("name", os.path.basename(p)),
                        "saved": meta.get(k, {}).get("saved", "")} if p else None)
@@ -82,8 +84,15 @@ def _state():
         except Exception as e:
             mp_err = str(e)
 
+    contratos = []
+    compras_path = _saved_path("compras")
+    if compras_path:
+        try:
+            contratos = processor.load_contratos(compras_path)
+        except Exception:
+            contratos = []
+
     meta_c = _load_json(META_PATH, {}).get("carteira")
-    ped_path = os.path.join(OUT_DIR, "pedidos.xlsx")
     ped_alt = glob.glob(os.path.join(OUT_DIR, "pedidos.*"))
     carteira = meta_c if (ped_alt) else None
 
@@ -91,7 +100,8 @@ def _state():
         "sources": sources,
         "custos": custos,
         "custos_revenda": _load_json(CUSTOS_REV_PATH, {}),
-        "usinas_revenda": _load_json(USINAS_REV_PATH, {}),
+        "revenda_meta": _load_json(REVENDA_META_PATH, {}),
+        "contratos": contratos,
         "mp_types": mp_types,
         "mp_err": mp_err,
         "carteira": carteira,
@@ -119,7 +129,7 @@ def state():
 def sources():
     """Etapa 1: recebe, salva e fixa as fontes (config, cif, prioridade)."""
     salvos = []
-    for key in SRC_KEYS:
+    for key in ALL_SRC_KEYS:
         if key in request.files and request.files[key].filename:
             f = request.files[key]
             if not _ext_ok(f.filename):
@@ -152,8 +162,8 @@ def custos():
         _save_json(CUSTOS_PATH, data.get("custos") or {})
     if "custos_revenda" in data:
         _save_json(CUSTOS_REV_PATH, data.get("custos_revenda") or {})
-    if "usinas_revenda" in data:
-        _save_json(USINAS_REV_PATH, data.get("usinas_revenda") or {})
+    if "revenda_meta" in data:
+        _save_json(REVENDA_META_PATH, data.get("revenda_meta") or {})
     return jsonify({"ok": True})
 
 
@@ -198,7 +208,9 @@ def carteira():
         return jsonify({"ok": False, "error": str(e)}), 400
     resumo["custos"] = _load_json(CUSTOS_PATH, {})
     resumo["custos_revenda"] = _load_json(CUSTOS_REV_PATH, {})
-    resumo["usinas_revenda"] = _load_json(USINAS_REV_PATH, {})
+    resumo["revenda_meta"] = _load_json(REVENDA_META_PATH, {})
+    cp = _saved_path("compras")
+    resumo["contratos"] = processor.load_contratos(cp) if cp else []
     return jsonify(resumo)
 
 
@@ -208,7 +220,7 @@ def generate():
     data = request.get_json(force=True, silent=True) or {}
     custos_in = data.get("custos", {})
     custos_rev_in = data.get("custos_revenda", {})
-    usinas_rev_in = data.get("usinas_revenda", {})
+    revenda_meta_in = data.get("revenda_meta", {})
 
     cfg_path = _saved_path("config")
     cif_path = _saved_path("cif")
@@ -222,27 +234,28 @@ def generate():
         custos_in = _load_json(CUSTOS_PATH, {})
     if not custos_rev_in:
         custos_rev_in = _load_json(CUSTOS_REV_PATH, {})
-    if not usinas_rev_in:
-        usinas_rev_in = _load_json(USINAS_REV_PATH, {})
+    if not revenda_meta_in:
+        revenda_meta_in = _load_json(REVENDA_META_PATH, {})
     if not custos_in and not custos_rev_in:
         return jsonify({"ok": False, "error": "Informe os custos de MP e/ou de revenda."}), 400
 
-    _save_json(CUSTOS_PATH, custos_in)            # persiste custos de MP
-    _save_json(CUSTOS_REV_PATH, custos_rev_in)    # persiste custos de revenda
-    _save_json(USINAS_REV_PATH, usinas_rev_in)    # persiste usinas de revenda
+    _save_json(CUSTOS_PATH, custos_in)
+    _save_json(CUSTOS_REV_PATH, custos_rev_in)
+    _save_json(REVENDA_META_PATH, revenda_meta_in)
     try:
         df, meta = processor.process(ped_path, cfg_path, pri_path, custos_in,
                                      cif_path, custos_revenda=custos_rev_in,
-                                     usinas_revenda=usinas_rev_in)
-        df_full, df_main, df_exc, df_fob = processor.partition_and_sort(df)
+                                     revenda_meta=revenda_meta_in)
+        df_full, df_main, df_exc, df_fob, df_rev = processor.build_outputs_v2(df)
         out_path = os.path.join(OUT_DIR, "Analise_de_Margem.xlsx")
-        excel_export.export_excel(df_full, df_main, df_exc, df_fob, meta, out_path)
+        excel_export.export_excel(df_full, df_main, df_exc, df_fob, meta, out_path, df_rev=df_rev)
         resumo = processor.summarize(df)
         diag = processor.diagnostics(df)
         diag["n_total"] = int(len(df_full))
         diag["n_elegiveis"] = int(len(df_main))
         diag["n_excecoes"] = int(len(df_exc))
         diag["n_fob"] = int(len(df_fob))
+        diag["n_revenda"] = int(len(df_rev))
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 

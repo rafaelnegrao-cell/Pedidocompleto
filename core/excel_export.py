@@ -154,7 +154,7 @@ def _empty_sheet(ws, msg, width=70):
     ws.column_dimensions["A"].width = width
 
 
-def export_excel(df_full, df_main, df_exc, df_fob, meta, out_path):
+def export_excel(df_full, df_main, df_exc, df_fob, meta, out_path, df_rev=None):
     wb = Workbook()
     ws0 = wb.active
     ws0.title = "Carteira Completa"      # todos os pedidos, sem exclusao
@@ -181,6 +181,12 @@ def export_excel(df_full, df_main, df_exc, df_fob, meta, out_path):
         ws3.column_dimensions["A"].width = 24  # coluna manual de data
     else:
         _empty_sheet(ws3, "Nenhum pedido FOB nesta carteira.", 60)
+
+    ws4 = wb.create_sheet("Revenda")     # somente pedidos de revenda
+    if df_rev is not None and not df_rev.empty:
+        _write_sheet(ws4, df_rev, meta, fob_highlight=False)
+    else:
+        _empty_sheet(ws4, "Nenhum pedido de revenda nesta carteira.", 60)
 
     wb.save(out_path)
     return out_path
