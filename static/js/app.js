@@ -28,8 +28,30 @@ function showMsg(sel, text, type) {
 function showView(name) {
   $("#view-import").classList.toggle("hidden", name !== "import");
   $("#view-painel").classList.toggle("hidden", name !== "painel");
+  // sincroniza item ativo na sidebar (itens 1 e 2)
+  document.querySelectorAll('.sb-item[data-view]').forEach((a) =>
+    a.classList.toggle("active", a.dataset.view === name));
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
+
+/* ---------- navegacao pela sidebar (itens Importar / Gerador) ---------- */
+document.querySelectorAll('.sb-item[data-view]').forEach((a) => {
+  a.addEventListener("click", (e) => {
+    e.preventDefault();
+    const view = a.dataset.view;
+    if (view === "painel") {
+      // se ha carteira salva, abre o painel ja com os dados; senao, painel vazio
+      const temCarteira = typeof RESUMO !== "undefined" && RESUMO;
+      const temSalva = !$("#btn-continuar").classList.contains("hidden");
+      if (!temCarteira && temSalva) { carregarCarteira(false); return; }
+      showView("painel");
+      if (!temCarteira) showMsg("#msg-pedido",
+        "Importe a carteira em \u201CImportar arquivos\u201D para gerar o Pedido Completo.", "info");
+    } else {
+      showView("import");
+    }
+  });
+});
 
 const fontes = { config: null, cif: null, prioridade: null, compras: null };
 let pedidoFile = null;
@@ -69,9 +91,9 @@ async function loadState() {
       if (!Object.keys(SAVED_CUSTOS_REV).length && ls.custos_revenda) SAVED_CUSTOS_REV = ls.custos_revenda;
       if (!Object.keys(SAVED_REVENDA_META).length && ls.revenda_meta) SAVED_REVENDA_META = ls.revenda_meta;
     } catch (e) { /* ignore */ }
-    const labels = { config: "Config", cif: "CIF", prioridade: "Priorizados", compras: "Compras" };
+    const labels = { config: "Config", cif: "CIF", compras: "Compras" };
     const partes = [];
-    ["config", "cif", "prioridade", "compras"].forEach((k) => {
+    ["config", "cif", "compras"].forEach((k) => {
       if (d.sources[k]) partes.push(`${labels[k]}: <strong>${d.sources[k].name}</strong> (${d.sources[k].saved})`);
     });
     const banner = $("#banner-fontes");
@@ -85,6 +107,14 @@ async function loadState() {
       $("#btn-continuar").classList.remove("hidden");
     } else {
       $("#btn-continuar").classList.add("hidden");
+    }
+    const gb = $("#gerado-box");
+    if (gb) {
+      if (d.gerado) {
+        gb.style.display = "block";
+        gb.innerHTML = `Última análise gerada: <strong>${d.gerado.name}</strong> (${d.gerado.saved})` +
+          ` — <a href="/download/ultima" download>⬇ Baixar novamente</a>`;
+      } else { gb.style.display = "none"; }
     }
   } catch (e) { /* silencioso */ }
 }
@@ -228,20 +258,23 @@ document.addEventListener("click", (e) => {
 function renderPainel() {
   $("#painel-carteira").textContent = `${RESUMO.n_pedidos} pedidos · ${RESUMO.n_linhas} linhas`;
 
-  // cards de MP (envasado)
+  // cards de MP (envasado) — inclui o grupo "(sem cadastro)" sinalizado,
+  // para o total do Envasado bater com a soma dos cards exibidos.
   const grid = $("#mp-grid"); grid.innerHTML = "";
-  const mps = Object.keys(RESUMO.por_mp).filter((m) => RESUMO.por_mp[m].tem_mp);
+  const mps = Object.keys(RESUMO.por_mp);
   mps.forEach((mp) => {
     const info = RESUMO.por_mp[mp];
+    const semMP = !info.tem_mp;
     const v = SAVED_CUSTOS[mp] != null ? SAVED_CUSTOS[mp] : "";
     const row = document.createElement("div");
-    row.className = "mp-card";
+    row.className = "mp-card" + (semMP ? " mp-alerta" : "");
     row.innerHTML = `
       <div class="mp-top"><div class="mp-nome">${mp}</div>
         <div class="mp-vol">${TON(info.peso)} · ${info.n_linhas} linha(s)</div></div>
       <div class="mp-input"><span class="pre">R$/saca 50kg</span>
         <input type="text" inputmode="decimal" data-mp="${mp}" value="${toBR(v)}" placeholder="0,00">
         <span class="mp-kg" data-kg="${mp}">— /kg</span></div>
+      ${semMP ? '<div class="mp-aviso">Produtos sem matéria-prima cadastrada no Config — entram no total com custo 0 até você informar um R$/saca ou cadastrá-los.</div>' : ''}
       <div class="mp-mc" data-mc="${mp}">MC: —</div>`;
     grid.appendChild(row);
   });
@@ -408,4 +441,13 @@ $("#btn-gerar").addEventListener("click", async () => {
   finally { btn.disabled = false; btn.textContent = "Gerar Planilha de Pedido Completo"; }
 });
 
-loadState();
+(async function init() {
+  await loadState();
+  const h = (location.hash || "").replace("#", "");
+  if (h === "painel") {
+    const temSalva = !$("#btn-continuar").classList.contains("hidden");
+    if (temSalva) carregarCarteira(false); else showView("painel");
+  } else {
+    showView("import");
+  }
+})();

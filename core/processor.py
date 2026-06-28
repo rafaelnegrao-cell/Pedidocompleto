@@ -266,6 +266,8 @@ def _match_info(cfg, nome_produto):
 
 
 def load_priority_set(priority_path):
+    if not priority_path:
+        return set()
     df = _read_any(priority_path)
     if df.empty:
         return set()
@@ -299,14 +301,15 @@ def diagnostics(df):
     }
 
 
-def analyze(orders_path, config_path, priority_path, cif_path=None):
+def analyze(orders_path, config_path, priority_path, cif_path=None, prioridade=None):
     orders = _read_any(orders_path)
     if orders.empty:
         raise ValueError("O arquivo A Faturar esta vazio.")
 
     np_col = resolve(orders, COLMAP["nome_produto"], field_name="Produto")
     cfg = load_config_index(config_path)
-    prioridade = load_priority_set(priority_path)
+    if prioridade is None:
+        prioridade = load_priority_set(priority_path)
 
     mp_set, sem_config = set(), set()
     for _, row in orders.iterrows():
@@ -344,10 +347,11 @@ def analyze(orders_path, config_path, priority_path, cif_path=None):
 #  Etapa 3: processamento + calculo de margem
 # =====================================================================
 def process(orders_path, config_path, priority_path, custos_saca, cif_path=None,
-            custos_revenda=None, revenda_meta=None):
+            custos_revenda=None, revenda_meta=None, prioridade=None):
     orders = _read_any(orders_path)
     cfg = load_config_index(config_path)
-    prioridade = load_priority_set(priority_path)
+    if prioridade is None:
+        prioridade = load_priority_set(priority_path)
     cif = frete_cif.load_cif_table(cif_path or config_path)
 
     custos_revenda = custos_revenda or {}
@@ -517,7 +521,7 @@ def summarize(df):
     }
 
 
-def carteira_resumo(orders_path, config_path, priority_path, cif_path=None):
+def carteira_resumo(orders_path, config_path, priority_path, cif_path=None, prioridade=None):
     """
     Agrega a carteira para o painel ao vivo (MC inicial com Custo MP = 0).
     Devolve, por MP e no total: Valor, Peso e 'outras deducoes' (ICMS+Frete+
@@ -595,7 +599,7 @@ def carteira_resumo(orders_path, config_path, priority_path, cif_path=None):
         sel = (mixs == mv)
         chaves = {}
         for k in set(chave[sel]):
-            kk = str(k)
+            kk = str(k) if str(k).strip() else "(sem cadastro)"
             chaves[kk] = round(float(peso[sel & (chave == k)].sum()), 2)
         por_mix[mv] = {
             "valor": round(float(valor[sel].sum()), 2),

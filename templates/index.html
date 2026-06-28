@@ -7,6 +7,9 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
+<div class="app-shell">
+{% include "_sidebar.html" %}
+<div class="app-main">
 <div class="topbar">
   <div class="logo">N1</div>
   <div>
@@ -43,13 +46,6 @@
           <div class="hint">Frete padrão por cidade, origem e faixa de peso</div>
           <div class="fname"></div>
           <input type="file" class="hidden" data-key="cif" accept=".xlsx,.xls,.csv">
-        </label>
-        <label class="drop" id="drop-prioridade">
-          <div class="ic">⭐</div>
-          <div class="nm">Pedidos Priorizados <span class="req">*</span></div>
-          <div class="hint">Coluna única com os pedidos prioritários</div>
-          <div class="fname"></div>
-          <input type="file" class="hidden" data-key="prioridade" accept=".xlsx,.xls,.csv">
         </label>
         <label class="drop" id="drop-compras">
           <div class="ic">🧾</div>
@@ -89,6 +85,7 @@
         <span class="hint-inline" id="carteira-status"></span>
       </div>
       <div id="msg-carteira"></div>
+      <div id="gerado-box" class="msg info" style="display:none"></div>
     </div>
 
   </div>
@@ -138,6 +135,8 @@
 
   <div class="foot">Eixo N1 / N1 Flow · Módulo de Margem de Contribuição</div>
 </div>
+</div><!-- /.app-main -->
+</div><!-- /.app-shell -->
 
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>

@@ -1,0 +1,56 @@
+========================================================
+  DEPLOY LIMPO - Eixo N1 / Pedido Completo + Tabela Varejo
+  build v3
+========================================================
+
+O REPOSITORIO DEVE CONTER EXATAMENTE ISTO (nada mais):
+
+  app.py              <- app Flask (gunicorn app:app)
+  Procfile            <- deve conter:  web: gunicorn app:app
+  railway.json
+  requirements.txt
+  runtime.txt
+  core/
+    __init__.py
+    columns.py
+    excel_export.py
+    frete_cif.py
+    processor.py
+    varejo.py         <- blueprint /varejo (modulo integrado)
+  templates/
+    index.html
+    _sidebar.html     <- sidebar com 3 itens (mostra "build v3")
+    varejo.html       <- pagina Varejo (mostra "build v3" na topbar)
+  static/
+    css/style.css     <- contem as regras .app-shell / .app-main / .sidebar
+    js/app.js
+
+--------------------------------------------------------
+  APAGAR DO REPOSITORIO (sobras do standalone antigo):
+--------------------------------------------------------
+
+  run.py              <- NAO pertence ao modulo integrado
+  routes/             <- pasta inteira (routes/__init__.py, routes/varejo.py)
+
+Esses dois sao do "Tabela Varejo" standalone. O modulo
+integrado roda por "gunicorn app:app" (Procfile) e usa
+core/varejo.py, NAO routes/. Como o "Add files via upload"
+do GitHub nao apaga arquivos antigos, eles ficaram presos
+no repo e devem ser removidos manualmente (botao ... > Delete).
+
+--------------------------------------------------------
+  COMO CONFIRMAR QUE A VERSAO CERTA SUBIU:
+--------------------------------------------------------
+
+1. Suba o conteudo deste zip (sobrescreve os arquivos certos).
+2. Apague run.py e a pasta routes/ pelo GitHub.
+3. Aguarde o redeploy do Railway terminar.
+4. Abra /varejo/ e de Ctrl+F5 (refresh forcado).
+5. Deve aparecer "build v3":
+     - no rodape da sidebar, e
+     - na linha cinza abaixo do titulo "Tabela de Precos Varejo".
+   Se aparecer "build v3", a topbar fica no topo (nao mais
+   como coluna) e o clique na rota responde na hora.
+
+   Se NAO aparecer "build v3", o template antigo ainda esta
+   no ar (upload nao pegou ou cache) - repita 1-4.

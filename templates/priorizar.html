@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>N1 · Priorizar Pedidos</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>
+:root{ --verde:#008D67; --verde-esc:#006B4F; --verde-cl:#41C097; --ink:#333; --muted:#6B8C7A;
+  --borda:#E9ECEF; --zebra:#F8F9FA; --suc:#28A745; --risco:#DC3545; --sb-w:248px; }
+/* layout critico inline (fallback) */
+.app-shell{display:flex;min-height:100vh;align-items:stretch}
+.sidebar{width:var(--sb-w);flex:0 0 var(--sb-w);background:linear-gradient(170deg,var(--verde),var(--verde-esc));color:#fff;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.sb-brand{display:flex;align-items:center;gap:11px;padding:18px 18px 14px}
+.sb-logo{width:38px;height:38px;border-radius:10px;background:#fff;color:var(--verde);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px}
+.sb-brand-txt{display:flex;flex-direction:column;line-height:1.15}.sb-brand-txt strong{font-size:15px}.sb-brand-txt span{font-size:11px;opacity:.85}
+.sb-nav{display:flex;flex-direction:column;gap:3px;padding:8px 10px;margin-top:6px}
+.sb-item{display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:9px;color:#eafff7;text-decoration:none;font-size:13.5px;font-weight:600}
+.sb-item:hover{background:rgba(255,255,255,.12);color:#fff}
+.sb-item.active{background:#fff;color:var(--verde-esc);box-shadow:0 2px 8px rgba(0,0,0,.12)}
+.sb-ic{font-size:16px;width:20px;text-align:center}.sb-lbl{flex:1}
+.sb-foot{margin-top:auto;padding:14px 18px;font-size:10.5px;opacity:.7}
+.app-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column}
+@media print{.sidebar{display:none!important}.app-shell{display:block}}
+/* conteudo */
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,Helvetica,sans-serif;color:var(--ink);font-size:13px;background:#fff}
+.topbar{background:linear-gradient(110deg,var(--verde),var(--verde-esc));color:#fff;padding:14px 20px;display:flex;align-items:center;gap:14px}
+.topbar .logo{width:40px;height:40px;border-radius:10px;background:#fff;color:var(--verde);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px}
+.topbar h1{font-size:18px;font-weight:700}.topbar .sub{font-size:11px;opacity:.9}
+.wrap{padding:16px 20px;max-width:1600px;margin:0 auto;width:100%}
+.card{border:1px solid var(--borda);border-radius:10px;padding:14px 16px;margin-bottom:14px;background:#fff}
+.btn{border:none;border-radius:8px;padding:9px 16px;font-weight:700;font-size:13px;cursor:pointer}
+.btn-verde{background:var(--verde);color:#fff}.btn-out{background:#fff;color:var(--verde-esc);border:1.5px solid var(--verde)}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.filtros{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.fg{display:flex;flex-direction:column;gap:3px}
+.fg label{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.fg select,.fg input{border:1.5px solid var(--borda);border-radius:6px;padding:6px 8px;font-size:12px;min-width:120px;background:#fff}
+.kpis{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px}
+.kpi{flex:1;min-width:150px;border:1px solid var(--borda);border-left:4px solid var(--verde);border-radius:8px;padding:10px 14px;background:var(--zebra)}
+.kpi .l{font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase}
+.kpi .v{font-size:20px;font-weight:800;color:var(--verde-esc);margin-top:2px}
+.kpi.neg{border-left-color:var(--risco)}.kpi.neg .v{color:var(--risco)}
+.tbl-wrap{overflow-x:hidden;overflow-y:auto;max-height:60vh;border:1px solid var(--borda);border-radius:8px}
+table{border-collapse:collapse;width:100%;table-layout:fixed;font-size:11px}
+th{position:sticky;top:0;background:var(--verde-esc);color:#fff;padding:6px 6px;text-align:left;font-size:10.5px;white-space:nowrap;z-index:2;overflow:hidden;text-overflow:ellipsis}
+td{padding:5px 6px;border-bottom:1px solid var(--borda);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+tr:nth-child(even) td{background:var(--zebra)}
+tr.sel td{background:#E8F8F1}
+.num{text-align:right;font-family:monospace}.mcpos{color:var(--suc);font-weight:700}.mcneg{color:var(--risco);font-weight:700}
+.badge{font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:#FFF3CD;color:#856404;margin-left:4px}
+.chip-ch{font-size:10px;font-weight:700;padding:2px 7px;border-radius:9px}
+.ch-Varejo{background:#E3F2FD;color:#1565C0}.ch-Industria{background:#FFF3E0;color:#E65100}.ch-Exportacao{background:#E8F5E9;color:#2E7D32}
+.muted{color:var(--muted);font-size:11px}
+.toolbar{display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+.saved-info{background:var(--zebra);border:1px solid var(--borda);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--verde-esc)}
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar no-print">
+    <div class="sb-brand"><div class="sb-logo">N1</div>
+      <div class="sb-brand-txt"><strong>Eixo N1</strong><span>Pedido Completo</span></div></div>
+    <nav class="sb-nav">
+      <a class="sb-item" href="/#import"><span class="sb-ic">📥</span><span class="sb-lbl">Importar arquivos</span></a>
+      <a class="sb-item" href="/#painel"><span class="sb-ic">🧮</span><span class="sb-lbl">Gerador Pedido Completo</span></a>
+      <a class="sb-item active" href="/priorizar"><span class="sb-ic">⭐</span><span class="sb-lbl">Priorizar Pedidos</span></a>
+      <a class="sb-item" href="/varejo/"><span class="sb-ic">🏪</span><span class="sb-lbl">Tabela Varejo</span></a>
+    </nav>
+    <div class="sb-foot">N1 Alimentos S/A · <strong>build v5</strong></div>
+  </aside>
+  <div class="app-main">
+    <div class="topbar">
+      <div class="logo">N1</div>
+      <div style="flex:1"><h1>Priorizar Pedidos</h1>
+        <div class="sub">Carteira a faturar com previsibilidade de margem · seleção de prioridade por pedido</div></div>
+    </div>
+    <div class="wrap">
+      <div class="card" id="card-top">
+        <div class="toolbar">
+          <span class="saved-info" id="saved-info">Carregando…</span>
+          <button class="btn btn-verde" id="btn-salvar" style="margin-left:auto" disabled>Salvar priorização</button>
+          <button class="btn btn-out" id="btn-export" disabled>Exportar Pedido Completo c/ priorização</button>
+        </div>
+        <div id="msg" class="muted"></div>
+      </div>
+
+      <div class="card" id="card-filtros" style="display:none">
+        <div class="filtros">
+          <div class="fg"><label>Vendedor</label><select id="f-vend"><option value="">Todos</option></select></div>
+          <div class="fg"><label>Cliente</label><select id="f-cli"><option value="">Todos</option></select></div>
+          <div class="fg"><label>UF</label><select id="f-uf"><option value="">Todas</option></select></div>
+          <div class="fg"><label>Canal</label><select id="f-canal"><option value="">Todos</option></select></div>
+          <div class="fg"><label>Tipo Produto</label><select id="f-tp"><option value="">Todos</option></select></div>
+          <div class="fg"><label>Rota</label><select id="f-rota"><option value="">Todas</option></select></div>
+          <div class="fg"><label>MC</label><select id="f-mc"><option value="">Todas</option><option value="pos">Positiva</option><option value="neg">Negativa</option></select></div>
+          <div class="fg"><label>Priorizados</label><select id="f-pri"><option value="">Todos</option><option value="sim">Priorizados</option><option value="nao">Não priorizados</option></select></div>
+          <button class="btn btn-out" id="btn-limpar">Limpar</button>
+        </div>
+        <div class="kpis" id="kpis"></div>
+      </div>
+
+      <div class="card" id="card-tabela" style="display:none">
+        <div class="toolbar">
+          <button class="btn btn-out" id="btn-selall">Priorizar todos (filtrados)</button>
+          <button class="btn btn-out" id="btn-selnone">Limpar seleção</button>
+          <span class="muted" id="sel-info"></span>
+        </div>
+        <div class="tbl-wrap"><table id="tbl">
+          <colgroup>
+            <col style="width:3%"><col style="width:6%"><col style="width:11%"><col style="width:10%"><col style="width:9%">
+            <col style="width:10%"><col style="width:10%"><col style="width:8%"><col style="width:5%"><col style="width:6%">
+            <col style="width:6%"><col style="width:4%"><col style="width:6.5%"><col style="width:5.5%">
+          </colgroup>
+          <thead><tr>
+          <th><input type="checkbox" id="chk-head" title="Priorizar página filtrada"></th>
+          <th>Pedido</th><th>Vendedor</th><th>Cliente</th><th>Cidade/UF</th>
+          <th>Nome Curto</th><th>Produto</th><th>Rota</th><th class="num">R$/t</th>
+          <th>Canal</th><th class="num">Peso</th><th>Frete</th><th class="num">MC R$</th><th class="num">MC %</th>
+        </tr></thead><tbody id="tb"></tbody></table></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+let DADOS=[], SEL=new Set();
+const BRL=v=>"R$ "+(v||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});
+const KG=v=>(v||0).toLocaleString("pt-BR",{maximumFractionDigits:0});
+const PCT=v=>(v*100).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2})+"%";
+const num=x=>{const n=parseFloat(x);return isNaN(n)?0:n;};
+const val=id=>document.getElementById(id).value;
+const norm=s=>String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+
+function agregar(rows,H){
+  const idx=n=>H.indexOf(n);
+  const c={valor:idx("Valor"),vend:idx("Vendedor"),uf:idx("Uf Cliente"),cid:idx("Cidade"),cli:idx("Cliente"),
+    ped:idx("Pedido"),tf:idx("Tipo Frete"),peso:idx("Peso Total"),tp:idx("TipoProduto"),mp:idx("Tipo de Matéria Prima"),
+    canal:idx("Linha"),nc:idx("Nome Curto"),rota:idx("Destino da Rota"),frete:idx("Faixa Frete (R$/t)"),
+    mc:idx("Margem de Contribuição Nominal (MC$)")};
+  const mapa=new Map();
+  rows.forEach(r=>{const p=r[c.ped]; if(p===undefined||p===null||p==="")return;
+    let d=mapa.get(p);
+    if(!d){d={pedido:String(p),valor:0,peso:0,mc_rs:0,_tps:{},_ncs:{},_canais:{},_mps:new Set(),
+      vendedor:String(r[c.vend]??""),uf:String(r[c.uf]??""),cidade:String(r[c.cid]??""),cliente:String(r[c.cli]??""),
+      tipo_frete:String(r[c.tf]??""),rota:String(r[c.rota]??""),frete_ton:num(r[c.frete])};mapa.set(p,d);}
+    const pe=num(r[c.peso]);d.valor+=num(r[c.valor]);d.peso+=pe;d.mc_rs+=num(r[c.mc]);
+    const tp=String(r[c.tp]??"");d._tps[tp]=(d._tps[tp]||0)+pe;
+    const nc=String(r[c.nc]??"");d._ncs[nc]=(d._ncs[nc]||0)+pe;
+    const ca=String(r[c.canal]??"");d._canais[ca]=(d._canais[ca]||0)+pe;
+    if(r[c.mp])d._mps.add(String(r[c.mp]));});
+  const dom=o=>Object.keys(o).reduce((a,b)=>(o[b]>(o[a]||-1)?b:a),Object.keys(o)[0]||"");
+  return [...mapa.values()].map(d=>({pedido:d.pedido,vendedor:d.vendedor,uf:d.uf,cidade:d.cidade,cliente:d.cliente,
+    tipo_frete:d.tipo_frete,rota:d.rota,frete_ton:d.frete_ton,peso:Math.round(d.peso*100)/100,
+    valor:Math.round(d.valor*100)/100,mc_rs:Math.round(d.mc_rs*100)/100,mc_pct:d.valor?d.mc_rs/d.valor:0,
+    tipo_produto:dom(d._tps),n_tp:Object.keys(d._tps).length,nome_curto:dom(d._ncs),
+    canal:dom(d._canais),mp_misto:d._mps.size>1}));
+}
+
+function popular(sel,vals){const el=document.getElementById(sel);const keep=el.children[0];el.innerHTML="";el.appendChild(keep);
+  [...new Set(vals)].filter(v=>v!=="").sort((a,b)=>String(a).localeCompare(String(b),"pt-BR"))
+    .forEach(v=>{const o=document.createElement("option");o.value=v;o.textContent=v.length>40?v.slice(0,40)+"…":v;el.appendChild(o);});}
+function filtrados(){const fv=val("f-vend"),fc=val("f-cli"),fu=val("f-uf"),fca=val("f-canal"),ft=val("f-tp"),fr=val("f-rota"),fm=val("f-mc"),fp=val("f-pri");
+  return DADOS.filter(d=>{
+    if(fv&&d.vendedor!==fv)return false; if(fc&&d.cliente!==fc)return false; if(fu&&d.uf!==fu)return false;
+    if(fca&&d.canal!==fca)return false; if(ft&&d.tipo_produto!==ft)return false; if(fr&&d.rota!==fr)return false;
+    if(fm==="pos"&&d.mc_rs<=0)return false; if(fm==="neg"&&d.mc_rs>=0)return false;
+    if(fp==="sim"&&!SEL.has(d.pedido))return false; if(fp==="nao"&&SEL.has(d.pedido))return false;
+    return true;});}
+function indicadores(rows){const peso=rows.reduce((s,d)=>s+d.peso,0),valor=rows.reduce((s,d)=>s+d.valor,0),mc=rows.reduce((s,d)=>s+d.mc_rs,0),mcpct=valor?mc/valor:0;
+  document.getElementById("kpis").innerHTML=
+    `<div class="kpi"><div class="l">Pedidos</div><div class="v">${rows.length}</div></div>
+     <div class="kpi"><div class="l">Peso total</div><div class="v">${KG(peso)} kg</div></div>
+     <div class="kpi ${mc<0?'neg':''}"><div class="l">MC total (R$)</div><div class="v">${BRL(mc)}</div></div>
+     <div class="kpi ${mcpct<0?'neg':''}"><div class="l">MC %</div><div class="v">${PCT(mcpct)}</div></div>`;}
+function render(){const rows=filtrados();indicadores(rows);const tb=document.getElementById("tb");tb.innerHTML="";
+  rows.forEach(d=>{const tr=document.createElement("tr");if(SEL.has(d.pedido))tr.className="sel";
+    const cls=d.mc_rs>=0?"mcpos":"mcneg";const chCls="ch-"+norm(d.canal);
+    tr.innerHTML=`<td><input type="checkbox" class="row-chk" data-p="${d.pedido}" ${SEL.has(d.pedido)?"checked":""}></td>
+      <td><b>${d.pedido}</b></td>
+      <td title="${d.vendedor}">${d.vendedor}</td>
+      <td title="${d.cliente}">${d.cliente}</td>
+      <td title="${d.cidade}/${d.uf}">${d.cidade}/${d.uf}</td>
+      <td title="${d.nome_curto}">${d.nome_curto}</td>
+      <td title="${d.tipo_produto}${d.n_tp>1?' (+'+(d.n_tp-1)+')':''}${d.mp_misto?' · MP MISTO (MC proporcionalizado)':''}">${d.tipo_produto}${d.n_tp>1?` <span class="badge">+${d.n_tp-1}</span>`:""}${d.mp_misto?` <span class="badge">MISTO</span>`:""}</td>
+      <td title="${d.rota}">${d.rota}</td>
+      <td class="num">${d.frete_ton||"—"}</td>
+      <td><span class="chip-ch ${chCls}">${d.canal||"—"}</span></td>
+      <td class="num">${KG(d.peso)}</td><td>${d.tipo_frete}</td>
+      <td class="num ${cls}">${BRL(d.mc_rs)}</td><td class="num ${cls}">${PCT(d.mc_pct)}</td>`;
+    tb.appendChild(tr);});
+  tb.querySelectorAll(".row-chk").forEach(ch=>ch.addEventListener("change",e=>{
+    const p=e.target.dataset.p; if(e.target.checked)SEL.add(p);else SEL.delete(p);
+    e.target.closest("tr").classList.toggle("sel",e.target.checked); infoSel();}));
+  document.getElementById("chk-head").checked=false; infoSel();}
+function infoSel(){const sf=filtrados().filter(d=>SEL.has(d.pedido));const mc=sf.reduce((s,d)=>s+d.mc_rs,0);
+  document.getElementById("sel-info").textContent=`${SEL.size} priorizado(s) · ${sf.length} no filtro · MC priorizada ${BRL(mc)}`;}
+
+function bind(){
+  ["f-vend","f-cli","f-uf","f-canal","f-tp","f-rota","f-mc","f-pri"].forEach(id=>document.getElementById(id).addEventListener("change",render));
+  document.getElementById("btn-limpar").addEventListener("click",()=>{["f-vend","f-cli","f-uf","f-canal","f-tp","f-rota","f-mc","f-pri"].forEach(id=>document.getElementById(id).value="");render();});
+  document.getElementById("btn-selall").addEventListener("click",()=>{filtrados().forEach(d=>SEL.add(d.pedido));render();});
+  document.getElementById("btn-selnone").addEventListener("click",()=>{SEL.clear();render();});
+  document.getElementById("chk-head").addEventListener("change",e=>{filtrados().forEach(d=>{if(e.target.checked)SEL.add(d.pedido);else SEL.delete(d.pedido);});render();});
+  document.getElementById("btn-salvar").addEventListener("click",salvar);
+  document.getElementById("btn-export").addEventListener("click",exportar);
+}
+
+async function salvar(){
+  try{
+    const r=await (await fetch("/priorizacao",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({pedidos:[...SEL]})})).json();
+    if(!r.ok)throw new Error(r.error||"Falha ao salvar.");
+    document.getElementById("saved-info").textContent=`Última priorização: ${r.pedidos.length} pedido(s) · por ${r.login} · ${r.data}`;
+    msg(`✓ Priorização salva (${r.pedidos.length} pedidos) por ${r.login}.`,"ok");
+  }catch(e){ msg("Erro: "+e.message,"err"); }
+}
+async function exportar(){
+  msg("Gerando Pedido Completo com priorização…","");
+  try{
+    const r=await (await fetch("/generate",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})).json();
+    if(!r.ok)throw new Error(r.error||"Falha ao gerar.");
+    const a=document.createElement("a");a.href=r.download;a.download="Analise_de_Margem.xlsx";document.body.appendChild(a);a.click();a.remove();
+    msg(`✓ Arquivo gerado. ${r.resumo?(r.resumo.priorizados+" pedido(s) marcados como priorizados."):""}`,"ok");
+  }catch(e){ msg("Erro ao exportar: "+e.message,"err"); }
+}
+function msg(t,k){const m=document.getElementById("msg");m.textContent=t;m.style.color=k==="err"?"var(--risco)":k==="ok"?"var(--suc)":"var(--muted)";}
+
+async function carregar(){
+  try{
+    const r=await (await fetch("/carteira_pedidos")).json();
+    if(!r.ok)throw new Error(r.error||"Falha ao carregar carteira.");
+    DADOS=agregar(r.rows, r.header.map(h=>String(h).replace(/\s+/g," ").trim()));
+    // restaurar seleção salva
+    const pri=r.priorizacao||{};
+    SEL=new Set((pri.pedidos||[]).map(String));
+    if(pri.login||pri.data) document.getElementById("saved-info").textContent=`Última priorização: ${(pri.pedidos||[]).length} pedido(s) · por ${pri.login||"—"} · ${pri.data||""}`;
+    else document.getElementById("saved-info").textContent="Nenhuma priorização salva ainda.";
+    if(r.persistente===false){
+      msg("⚠ Armazenamento EFÊMERO: o que você salvar será perdido no próximo deploy. Anexe um Volume do Railway ou um banco Postgres (DATABASE_URL).","err");
+    }
+    popular("f-vend",DADOS.map(d=>d.vendedor)); popular("f-cli",DADOS.map(d=>d.cliente));
+    popular("f-uf",DADOS.map(d=>d.uf)); popular("f-canal",DADOS.map(d=>d.canal));
+    popular("f-tp",DADOS.map(d=>d.tipo_produto)); popular("f-rota",DADOS.map(d=>d.rota));
+    document.getElementById("card-filtros").style.display="block";
+    document.getElementById("card-tabela").style.display="block";
+    document.getElementById("btn-salvar").disabled=false;
+    document.getElementById("btn-export").disabled=false;
+    msg(`${DADOS.length} pedidos carregados.`,"");
+    render();
+  }catch(e){
+    document.getElementById("saved-info").textContent="—";
+    msg("Não foi possível carregar a carteira: "+e.message+" — importe as fontes e a carteira a faturar primeiro.","err");
+  }
+}
+bind(); carregar();
+</script>
+</body>
+</html>

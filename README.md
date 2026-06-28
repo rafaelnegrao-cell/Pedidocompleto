@@ -115,3 +115,38 @@ n1-margem/
 ├── data/jobs/             # estado transitório por análise
 ├── requirements.txt · Procfile · runtime.txt · railway.json · .gitignore
 ```
+
+---
+
+## Integração: Tabela Varejo (sidebar)
+
+A interface agora tem uma **barra lateral** com três itens, nesta ordem:
+
+1. **Importar arquivos** — tela de Fontes de Dados + Carteira a Faturar (a antiga *view* de importação).
+2. **Gerador Pedido Completo** — indicadores, custos de MP/revenda e geração da planilha (a antiga *view* de painel).
+3. **Tabela Varejo** — precificação CIF de varejo por rota e faixa de volume (rota `/varejo/`).
+
+### O que mudou (tudo aditivo)
+
+- `app.py`: **+4 linhas** registrando a blueprint da Varejo. Nenhuma função de estado, caminho ou lógica de `STATE_DIR` foi alterada.
+- `core/varejo.py` (novo): blueprint isolada, prefixo `/varejo`.
+- `templates/_sidebar.html` (novo): barra lateral compartilhada.
+- `templates/varejo.html` (novo): a Tabela Varejo repaginada na paleta do módulo (verde `#008D67`/`#006B4F`, Arial, fundo `#F8F9FA`), dentro do mesmo shell de sidebar.
+- `templates/index.html`: envelopado no shell `app-shell` + sidebar (conteúdo inalterado).
+- `static/css/style.css`: **acrescido** o bloco da sidebar/shell (estilos anteriores intactos).
+- `static/js/app.js`: navegação da sidebar (itens 1 e 2 trocam a *view*; item 3 vai para `/varejo/`).
+
+### Persistência da Varejo (não colide com os dados existentes)
+
+A Varejo grava **apenas** dois arquivos de nome próprio no mesmo diretório de estado/volume:
+`varejo_rotas_cache.json` (cache de fretes) e `varejo_tabelas.json` (tabelas publicadas).
+**Não toca** em `sources/`, `out/`, `custos.json`, `custos_revenda.json`, `revenda_meta.json` nem `meta.json`.
+
+### Rotas novas
+
+| Método | Rota | Função |
+|---|---|---|
+| GET  | `/varejo/` | tela da Tabela Varejo |
+| POST | `/varejo/upload_rotas` | (opcional) atualiza cache de fretes no servidor |
+| POST | `/varejo/api/publicar-tabela` | arquiva versão da tabela |
+| GET  | `/varejo/api/tabelas-publicadas` | lista versões |
